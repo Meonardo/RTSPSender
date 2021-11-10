@@ -97,7 +97,7 @@ func main() {
 	// in a production application you should exchange ICE Candidates via OnICECandidate
 	<-gatherComplete
 
-	gateway, err := janus.Connect("ws://192.168.5.105:8188")
+	gateway, err := janus.Connect("ws://127.0.0.1:8188")
 	if err != nil {
 		panic(err)
 	}

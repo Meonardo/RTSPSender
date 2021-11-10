@@ -1,3 +1,3 @@
 # RTSPSender
 
-Golang test.
+Golang test project with pion/webrtc & deepch/RTSPtoWebRTC.
