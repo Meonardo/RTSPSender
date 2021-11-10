@@ -97,7 +97,7 @@ func main() {
 	// in a production application you should exchange ICE Candidates via OnICECandidate
 	<-gatherComplete
 
-	gateway, err := janus.Connect("ws://192.168.5.12:8188")
+	gateway, err := janus.Connect("ws://192.168.5.105:8188")
 	if err != nil {
 		panic(err)
 	}
@@ -124,7 +124,7 @@ func main() {
 
 	go watchHandle(handle)
 
-	var room = 10001370
+	var room = 123456
 	_, err = handle.Message(map[string]interface{}{
 		"request": "join",
 		"ptype":   "publisher",
@@ -162,11 +162,11 @@ func main() {
 
 		// Start pushing buffers on these tracks
 		//screenPipeline := "avfvideosrc capture-screen=true ! video/x-raw,framerate=20/1 ! videoconvert ! x264enc tune=zerolatency bitrate=500 speed-preset=superfast key-int-max=20 ! video/x-h264,stream-format=byte-stream !"
-		//rtspPipeline := "rtspsrc location=rtsp://192.168.5.159/1 protocols=tcp latency=0 ! qtdemux ! queue ! h264parse ! video/x-h264,alignment=nal,stream-format=byte-stream !"
+		rtspPipeline := "rtspsrc location=rtsp://77.110.228.219/axis-media/media.amp protocols=tcp latency=0 ! rtph264depay ! queue ! h264parse ! video/x-h264,alignment=nal,stream-format=byte-stream !"
 		//gst.CreatePipeline("opus", []*webrtc.TrackLocalStaticSample{opusTrack}, "audiotestsrc").Start()
-		filePipeline := "filesrc location=/Users/amdox/Downloads/cam1.mp4 ! qtdemux ! queue ! h264parse ! video/x-h264,alignment=nal,stream-format=byte-stream !"
+		//filePipeline := "filesrc location=/Users/amdox/Downloads/cam1.mp4 ! qtdemux ! queue ! h264parse ! video/x-h264,alignment=nal,stream-format=byte-stream !"
 		//filePipeline1 := "filesrc location=/Users/amdox/Downloads/cam1.mp4 ! qtdemux ! h264parse ! decodebin ! x264enc tune=zerolatency bitrate=500 speed-preset=superfast key-int-max=20 ! video/x-h264,stream-format=byte-stream !"
-		gst.CreatePipeline("h264", []*webrtc.TrackLocalStaticSample{vp8Track}, filePipeline).Start()
+		gst.CreatePipeline("h264", []*webrtc.TrackLocalStaticSample{vp8Track}, rtspPipeline).Start()
 	}
 
 	select {}
