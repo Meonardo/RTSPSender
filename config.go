@@ -26,6 +26,7 @@ type ConfigST struct {
 //ServerST struct
 type ServerST struct {
 	Room		  string   `json:"room"`
+	Janus		  string	`json:"janus"`
 	HTTPPort      string   `json:"http_port"`
 	ICEServers    []string `json:"ice_servers"`
 	ICEUsername   string   `json:"ice_username"`
@@ -35,6 +36,7 @@ type ServerST struct {
 //StreamST struct
 type StreamST struct {
 	ID			 string `json:"id"`
+	Display		 string `json:"display"`
 	Mic 		 string `json:"mic"`
 	URL          string `json:"url"`
 	Status       bool   `json:"status"`

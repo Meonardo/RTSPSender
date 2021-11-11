@@ -1,8 +1,8 @@
 package webrtc
 
 import (
+	"RTSPSender/internal/janus"
 	"bytes"
-	"encoding/base64"
 	"errors"
 	"log"
 	"time"
@@ -51,6 +51,25 @@ type Options struct {
 	PortMax uint16
 }
 
+func watchHandle(handle *janus.Handle) {
+	// wait for event
+	for {
+		msg := <-handle.Events
+		switch msg := msg.(type) {
+		case *janus.SlowLinkMsg:
+			log.Println("SlowLinkMsg type ", handle.ID)
+		case *janus.MediaMsg:
+			log.Println("MediaEvent type", msg.Type, " receiving ", msg.Receiving)
+		case *janus.WebRTCUpMsg:
+			log.Println("WebRTCUp type ", handle.ID)
+		case *janus.HangupMsg:
+			log.Println("HangupEvent type ", handle.ID)
+		case *janus.EventMsg:
+			log.Printf("EventMsg %+v", msg.Plugindata.Data)
+		}
+	}
+}
+
 func NewMuxer(options Options) *Muxer {
 	tmp := Muxer{Options: options, ClientACK: time.NewTimer(time.Second * 20), StreamACK: time.NewTimer(time.Second * 20), streams: make(map[int8]*Stream)}
 	//go tmp.WaitCloser()
@@ -87,19 +106,14 @@ func (element *Muxer) NewPeerConnection(configuration webrtc.Configuration) (*we
 	return api.NewPeerConnection(configuration)
 }
 
-func (element *Muxer) WriteHeader(streams []av.CodecData, sdp64 string) (string, error) {
+func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
+	room string, id string, display string) (string, error) {
+
 	var WriteHeaderSuccess bool
 	if len(streams) == 0 {
 		return "", ErrorNotFound
 	}
-	sdpB, err := base64.StdEncoding.DecodeString(sdp64)
-	if err != nil {
-		return "", err
-	}
-	offer := webrtc.SessionDescription{
-		Type: webrtc.SDPTypeOffer,
-		SDP:  string(sdpB),
-	}
+
 	peerConnection, err := element.NewPeerConnection(webrtc.Configuration{
 		SDPSemantics: webrtc.SDPSemanticsUnifiedPlanWithFallback,
 	})
@@ -114,6 +128,7 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, sdp64 string) (string,
 			}
 		}
 	}()
+
 	for i, i2 := range streams {
 		var track *webrtc.TrackLocalStaticSample
 		if i2.Type().IsVideo() {
@@ -155,6 +170,7 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, sdp64 string) (string,
 		}
 		element.streams[int8(i)] = &Stream{track: track, codec: i2}
 	}
+
 	if len(element.streams) == 0 {
 		return "", ErrorNotTrackAvailable
 	}
@@ -164,24 +180,18 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, sdp64 string) (string,
 			element.Close()
 		}
 	})
-	peerConnection.OnDataChannel(func(d *webrtc.DataChannel) {
-		d.OnMessage(func(msg webrtc.DataChannelMessage) {
-			element.ClientACK.Reset(5 * time.Second)
-		})
-	})
 
-	if err = peerConnection.SetRemoteDescription(offer); err != nil {
-		return "", err
-	}
 	gatherCompletePromise := webrtc.GatheringCompletePromise(peerConnection)
-	answer, err := peerConnection.CreateAnswer(nil)
+
+	offer, err := peerConnection.CreateOffer(nil)
 	if err != nil {
 		return "", err
 	}
-	if err = peerConnection.SetLocalDescription(answer); err != nil {
+	if err = peerConnection.SetLocalDescription(offer); err != nil {
 		return "", err
 	}
 	element.pc = peerConnection
+
 	waitT := time.NewTimer(time.Second * 10)
 	select {
 	case <-waitT.C:
@@ -189,10 +199,72 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, sdp64 string) (string,
 	case <-gatherCompletePromise:
 		//Connected
 	}
-	resp := peerConnection.LocalDescription()
-	WriteHeaderSuccess = true
-	return base64.StdEncoding.EncodeToString([]byte(resp.SDP)), nil
 
+	gateway, err := janus.Connect(janusServer)
+	if err != nil {
+		panic(err)
+	}
+
+	session, err := gateway.Create()
+	if err != nil {
+		panic(err)
+	}
+
+	handle, err := session.Attach("janus.plugin.videoroom")
+	if err != nil {
+		panic(err)
+	}
+
+	go func() {
+		for {
+			if _, keepAliveErr := session.KeepAlive(); keepAliveErr != nil {
+				panic(keepAliveErr)
+			}
+
+			time.Sleep(30 * time.Second)
+		}
+	}()
+
+	go watchHandle(handle)
+
+	_, err = handle.Message(map[string]interface{}{
+		"request": "join",
+		"ptype":   "publisher",
+		"room":    room,
+		"id":      id,
+		"display":	display,
+		"pin": room,
+	}, nil)
+	if err != nil {
+		panic(err)
+	}
+
+	msg, err := handle.Message(map[string]interface{}{
+		"request": "publish",
+		"audio":   false,
+		"video":   true,
+		"data":    false,
+	}, map[string]interface{}{
+		"type":    "offer",
+		"sdp":     peerConnection.LocalDescription().SDP,
+		"trickle": false,
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	if msg.Jsep != nil {
+		err = peerConnection.SetRemoteDescription(webrtc.SessionDescription{
+			Type: webrtc.SDPTypeAnswer,
+			SDP:  msg.Jsep["sdp"].(string),
+		})
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	WriteHeaderSuccess = true
+	return "success", nil
 }
 
 func (element *Muxer) WritePacket(pkt av.Packet) (err error) {
