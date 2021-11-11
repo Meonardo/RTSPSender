@@ -3,9 +3,10 @@ package main
 import (
 	"RTSPSender/internal/webrtc"
 	"encoding/json"
+	"fmt"
+	webrtc2 "github.com/pion/webrtc/v3"
 	"log"
 	"net/http"
-	"os"
 	"sort"
 	"time"
 
@@ -17,26 +18,135 @@ type JCodec struct {
 	Type string
 }
 
+type Turn struct {
+	URL		string
+	User	string
+	Passwd	string
+}
+
+type Client struct {
+	debug 	int
+	
+	Room	string
+	RTSP	string
+	Display	string
+	ID		string
+	Janus	string
+	Mic string
+
+	Turn Turn
+	Stun string
+	PeerConnection *webrtc2.PeerConnection
+}
+
+var clients []Client
+
 func serveHTTP() {
-	gin.SetMode(gin.ReleaseMode)
+	gin.SetMode(gin.DebugMode)
 
 	router := gin.Default()
 	router.Use(CORSMiddleware())
-	
-	if _, err := os.Stat("./web"); !os.IsNotExist(err) {
-		router.LoadHTMLGlob("web/templates/*")
-		router.GET("/", HTTPAPIServerIndex)
-		router.GET("/stream/player/:uuid", HTTPAPIServerStreamPlayer)
-	}
-	router.POST("/stream/receiver/:uuid", HTTPAPIServerStreamWebRTC)
-	router.GET("/stream/codec/:uuid", HTTPAPIServerStreamCodec)
-	router.POST("/stream", HTTPAPIServerStreamWebRTC2)
 
-	router.StaticFS("/static", http.Dir("web/static"))
-	err := router.Run(Config.Server.HTTPPort)
+	router.POST("/camera/push/stop", Stop)
+	router.POST("/camera/push/start", Start)
+
+	var HTTPPort = "9001"
+	err := router.Run(HTTPPort)
 	if err != nil {
 		log.Fatalln("Start HTTP Server error", err)
 	}
+}
+
+func Start(c *gin.Context) {
+	room := c.PostForm("room")
+	if len(room) == 0 {
+		MakeResponse(false, -5, "Please input room number", c)
+		return
+	}
+
+	id := c.PostForm("id")
+	if len(id) == 0 {
+		MakeResponse(false, -5, "Please input display name", c)
+		return
+	}
+
+	display := c.PostForm("display")
+	if len(display) == 0 {
+		MakeResponse(false, -4, "Please input display name", c)
+		return
+	}
+	var mic = "mute"
+	mic = c.PostForm("mic")
+
+	RTSP := c.PostForm("rtsp")
+	if len(RTSP) == 0 {
+		MakeResponse(false, -3, "Please input RTSP stream address", c)
+		return
+	}
+
+	janus := c.PostForm("janus")
+	if len(janus) == 0 {
+		MakeResponse(false, -2, "Please input janus server address", c)
+		return
+	}
+
+	var client = Client{Room: room, RTSP: RTSP, Display: display, ID: id, Janus: janus, Mic: mic}
+	turnServer := c.PostForm("turn_server")
+	turnPasswd := c.PostForm("turn_passwd")
+	turnUser := c.PostForm("turn_user")
+
+	stunServer := c.PostForm("stun_server")
+	if len(stunServer) > 0 {
+		client.Stun = stunServer
+	}
+
+	if len(turnServer) > 0 && len(turnPasswd) > 0 && len(turnUser) > 0 {
+		turn := Turn{turnServer, turnUser,turnPasswd}
+		client.Turn = turn
+	}
+
+	Config.Server = ServerST{
+		room,
+		"9001",
+		[]string{stunServer, turnServer},
+		turnUser,
+		turnPasswd,
+	}
+	if _, ok := Config.Streams[id]; !ok {
+		Config.Streams[id] = StreamST{
+			URL:      RTSP,
+			Mic: 	  mic,
+			OnDemand: true,
+			DisableAudio: true,
+			Cl:       make(map[string]viewer),
+		}
+	} else {
+		MakeResponse(false, -7, "Stream already published", c)
+		return
+	}
+
+	clients = append(clients, client)
+	MakeResponse(true, 1, fmt.Sprintf("Publish RTSP %s in Room %s successfully!", RTSP, room), c)
+}
+
+func Stop(c *gin.Context) {
+	id := c.PostForm("id")
+
+	if _, ok := Config.Streams[id]; !ok {
+		message := fmt.Sprintf("Can not found ID %s", id)
+		MakeResponse(false, -1, message, c)
+		return
+	}
+	message := fmt.Sprintf("Stop ID %s successfully!", id)
+	MakeResponse(true, 1, message, c)
+}
+
+func MakeResponse(success bool, code int, data string, c *gin.Context) {
+	var state = 1
+	if !success {
+		state = code
+	}
+	c.JSON(http.StatusOK, gin.H{"state": state, "code": data})
 }
 
 //HTTPAPIServerIndex  index
@@ -98,13 +208,13 @@ func HTTPAPIServerStreamCodec(c *gin.Context) {
 }
 
 //HTTPAPIServerStreamWebRTC stream video over WebRTC
-func HTTPAPIServerStreamWebRTC(c *gin.Context) {
-	if !Config.ext(c.PostForm("suuid")) {
+func HTTPAPIServerStreamWebRTC(c *gin.Context, suuid string) {
+	if !Config.ext(suuid) {
 		log.Println("Stream Not Found")
 		return
 	}
-	Config.RunIFNotRun(c.PostForm("suuid"))
-	codecs := Config.coGe(c.PostForm("suuid"))
+	Config.RunIFNotRun(suuid)
+	codecs := Config.coGe(suuid)
 	if codecs == nil {
 		log.Println("Stream Codec Not Found")
 		return
@@ -113,7 +223,11 @@ func HTTPAPIServerStreamWebRTC(c *gin.Context) {
 	if len(codecs) == 1 && codecs[0].Type().IsAudio() {
 		AudioOnly = true
 	}
-	muxerWebRTC := webrtc.NewMuxer(webrtc.Options{ICEServers: Config.GetICEServers(), ICEUsername: Config.GetICEUsername(), ICECredential: Config.GetICECredential(), PortMin: Config.GetWebRTCPortMin(), PortMax: Config.GetWebRTCPortMax()})
+	muxerWebRTC := webrtc.NewMuxer(webrtc.Options{
+		ICEServers: Config.GetICEServers(),
+		ICEUsername: Config.GetICEUsername(),
+		ICECredential: Config.GetICECredential(),
+	})
 	answer, err := muxerWebRTC.WriteHeader(codecs, c.PostForm("data"))
 	if err != nil {
 		log.Println("WriteHeader", err)
@@ -201,8 +315,6 @@ func HTTPAPIServerStreamWebRTC2(c *gin.Context) {
 	muxerWebRTC := webrtc.NewMuxer(
 		webrtc.Options{
 			ICEServers: Config.GetICEServers(),
-			PortMin:    Config.GetWebRTCPortMin(),
-			PortMax:    Config.GetWebRTCPortMax(),
 		},
 	)
 

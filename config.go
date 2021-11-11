@@ -2,10 +2,7 @@ package main
 
 import (
 	"crypto/rand"
-	"encoding/json"
-	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"sync"
 	"time"
@@ -16,7 +13,7 @@ import (
 )
 
 //Config global
-var Config = loadConfig()
+var Config = ConfigST{}
 
 //ConfigST struct
 type ConfigST struct {
@@ -28,16 +25,17 @@ type ConfigST struct {
 
 //ServerST struct
 type ServerST struct {
+	Room		  string   `json:"room"`
 	HTTPPort      string   `json:"http_port"`
 	ICEServers    []string `json:"ice_servers"`
 	ICEUsername   string   `json:"ice_username"`
 	ICECredential string   `json:"ice_credential"`
-	WebRTCPortMin uint16   `json:"webrtc_port_min"`
-	WebRTCPortMax uint16   `json:"webrtc_port_max"`
 }
 
 //StreamST struct
 type StreamST struct {
+	ID			 string `json:"id"`
+	Mic 		 string `json:"mic"`
 	URL          string `json:"url"`
 	Status       bool   `json:"status"`
 	OnDemand     bool   `json:"on_demand"`
@@ -100,49 +98,6 @@ func (element *ConfigST) GetICECredential() string {
 	element.mutex.Lock()
 	defer element.mutex.Unlock()
 	return element.Server.ICECredential
-}
-
-func (element *ConfigST) GetWebRTCPortMin() uint16 {
-	element.mutex.Lock()
-	defer element.mutex.Unlock()
-	return element.Server.WebRTCPortMin
-}
-
-func (element *ConfigST) GetWebRTCPortMax() uint16 {
-	element.mutex.Lock()
-	defer element.mutex.Unlock()
-	return element.Server.WebRTCPortMax
-}
-
-func loadConfig() *ConfigST {
-	var tmp ConfigST
-	data, err := ioutil.ReadFile("config.json")
-	if err == nil {
-		err = json.Unmarshal(data, &tmp)
-		if err != nil {
-			log.Fatalln(err)
-		}
-		for i, v := range tmp.Streams {
-			v.Cl = make(map[string]viewer)
-			tmp.Streams[i] = v
-		}
-	} else {
-		addr := flag.String("listen", "8083", "HTTP host:port")
-		udpMin := flag.Int("udp_min", 0, "WebRTC UDP port min")
-		udpMax := flag.Int("udp_max", 0, "WebRTC UDP port max")
-		iceServer := flag.String("ice_server", "", "ICE Server")
-		flag.Parse()
-
-		tmp.Server.HTTPPort = *addr
-		tmp.Server.WebRTCPortMin = uint16(*udpMin)
-		tmp.Server.WebRTCPortMax = uint16(*udpMax)
-		if len(*iceServer) > 0 {
-			tmp.Server.ICEServers = []string{*iceServer}
-		}
-
-		tmp.Streams = make(map[string]StreamST)
-	}
-	return &tmp
 }
 
 func (element *ConfigST) cast(uuid string, pck av.Packet) {
