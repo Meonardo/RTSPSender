@@ -32,8 +32,8 @@ type Muxer struct {
 	pc        *webrtc.PeerConnection
 	ClientACK *time.Timer
 	StreamACK *time.Timer
-	Options   Options
-	janus 	  *janus.Gateway
+	Options Options
+	Janus   *janus.Gateway
 }
 
 type Stream struct {
@@ -208,7 +208,7 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 	if err != nil {
 		return "Connect janus server error", err
 	}
-	element.janus = gateway
+	element.Janus = gateway
 
 	session, err := gateway.Create()
 	if err != nil {
@@ -342,7 +342,7 @@ func (element *Muxer) Close() error {
 			return err
 		}
 	}
-	err := element.janus.Close()
+	err := element.Janus.Close()
 	if err != nil {
 		return err
 	}

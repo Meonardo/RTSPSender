@@ -101,6 +101,7 @@ func Start(c *gin.Context) {
 	}
 
 	msg, err := StreamWebRTC(id)
+
 	if err != nil {
 		if len(msg) == 0 {
 			msg += "janus error: " + err.Error()
@@ -177,6 +178,7 @@ func StreamWebRTC(uuid string) (string, error) {
 	}
 
 	stream.WebRTC = muxerWebRTC
+	Config.Streams[uuid] = stream
 
 	go func() {
 		cid, ch := Config.clAd(uuid)
