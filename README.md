@@ -1,3 +1,5 @@
 # RTSPSender
 
-Golang test project with pion/webrtc & deepch/RTSPtoWebRTC.
+Send RTSP streams to Janus videoroom.
+
+Based on pion/webrtc & deepch/rtsp.
