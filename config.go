@@ -1,6 +1,7 @@
 package main
 
 import (
+	"RTSPSender/internal/webrtc"
 	"crypto/rand"
 	"fmt"
 	"log"
@@ -45,6 +46,7 @@ type StreamST struct {
 	Debug        bool   `json:"debug"`
 	RunLock      bool   `json:"-"`
 	Codecs       []av.CodecData
+	WebRTC 		 *webrtc.Muxer
 	Cl           map[string]viewer
 }
 

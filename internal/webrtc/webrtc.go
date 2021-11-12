@@ -4,7 +4,9 @@ import (
 	"RTSPSender/internal/janus"
 	"bytes"
 	"errors"
+	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/pion/interceptor"
@@ -31,6 +33,7 @@ type Muxer struct {
 	ClientACK *time.Timer
 	StreamACK *time.Timer
 	Options   Options
+	janus 	  *janus.Gateway
 }
 
 type Stream struct {
@@ -111,14 +114,14 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 
 	var WriteHeaderSuccess bool
 	if len(streams) == 0 {
-		return "", ErrorNotFound
+		return "No stream found", ErrorNotFound
 	}
 
 	peerConnection, err := element.NewPeerConnection(webrtc.Configuration{
 		SDPSemantics: webrtc.SDPSemanticsUnifiedPlanWithFallback,
 	})
 	if err != nil {
-		return "", err
+		return "Create pc failed", err
 	}
 	defer func() {
 		if !WriteHeaderSuccess {
@@ -137,10 +140,10 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 					MimeType: "video/h264",
 				}, "pion-rtsp-video", "pion-rtsp-video")
 				if err != nil {
-					return "", err
+					return "Create track failed", err
 				}
 				if _, err = peerConnection.AddTrack(track); err != nil {
-					return "", err
+					return "Add track failed", err
 				}
 			}
 		} else if i2.Type().IsAudio() {
@@ -162,10 +165,10 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 				ClockRate: uint32(i2.(av.AudioCodecData).SampleRate()),
 			}, "pion-rtsp-audio", "pion-rtsp-audio")
 			if err != nil {
-				return "", err
+				return "Create track failed", err
 			}
 			if _, err = peerConnection.AddTrack(track); err != nil {
-				return "", err
+				return "Add track failed", err
 			}
 		}
 		element.streams[int8(i)] = &Stream{track: track, codec: i2}
@@ -185,10 +188,10 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 
 	offer, err := peerConnection.CreateOffer(nil)
 	if err != nil {
-		return "", err
+		return "Create offer failed", err
 	}
 	if err = peerConnection.SetLocalDescription(offer); err != nil {
-		return "", err
+		return "Set local sdp failed", err
 	}
 	element.pc = peerConnection
 
@@ -200,43 +203,52 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 		//Connected
 	}
 
+	// Janus
 	gateway, err := janus.Connect(janusServer)
 	if err != nil {
-		panic(err)
+		return "Connect janus server error", err
 	}
+	element.janus = gateway
 
 	session, err := gateway.Create()
 	if err != nil {
-		panic(err)
+		return "Create janus session error", err
 	}
 
 	handle, err := session.Attach("janus.plugin.videoroom")
 	if err != nil {
-		panic(err)
+		return "Attach janus session error", err
 	}
 
 	go func() {
 		for {
 			if _, keepAliveErr := session.KeepAlive(); keepAliveErr != nil {
-				panic(keepAliveErr)
+				log.Printf("Can not send keep-alive msg to janus %s", keepAliveErr)
+				return
 			}
-
 			time.Sleep(30 * time.Second)
 		}
 	}()
 
 	go watchHandle(handle)
 
+	roomNum, err := strconv.Atoi(room)
+	publisherID, err := strconv.Atoi(id)
+	if err != nil {
+		roomNum = 1234
+		log.Printf("Room number invalid %s", err)
+	}
+
 	_, err = handle.Message(map[string]interface{}{
 		"request": "join",
 		"ptype":   "publisher",
-		"room":    room,
-		"id":      id,
+		"room":    roomNum,
+		"id":      publisherID,
 		"display":	display,
 		"pin": room,
 	}, nil)
 	if err != nil {
-		panic(err)
+		return fmt.Sprintf("Join room %s failed", room), err
 	}
 
 	msg, err := handle.Message(map[string]interface{}{
@@ -250,7 +262,7 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 		"trickle": false,
 	})
 	if err != nil {
-		panic(err)
+		return fmt.Sprintf("Publish to room %s failed", room), err
 	}
 
 	if msg.Jsep != nil {
@@ -259,12 +271,13 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 			SDP:  msg.Jsep["sdp"].(string),
 		})
 		if err != nil {
-			panic(err)
+			return fmt.Sprintf("No remote sdp found %s error", room), err
 		}
+		WriteHeaderSuccess = true
+		return "", nil
+	} else {
+		return fmt.Sprintf("No JSEP found %s error", room), err
 	}
-
-	WriteHeaderSuccess = true
-	return "success", nil
 }
 
 func (element *Muxer) WritePacket(pkt av.Packet) (err error) {
@@ -328,6 +341,10 @@ func (element *Muxer) Close() error {
 		if err != nil {
 			return err
 		}
+	}
+	err := element.janus.Close()
+	if err != nil {
+		return err
 	}
 	return nil
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"RTSPSender/internal/webrtc"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -66,7 +67,7 @@ func Start(c *gin.Context) {
 	turnUser := c.PostForm("turn_user")
 	stunServer := c.PostForm("stun_server")
 
-	if len(turnServer) > 0 && len(turnPasswd) > 0 && len(turnUser) > 0 {
+	if len(turnServer) == 0 || len(turnPasswd) == 0 || len(turnUser) == 0 {
 		MakeResponse(false, -2, "Please set ICE servers", c)
 		return
 	}
@@ -86,6 +87,7 @@ func Start(c *gin.Context) {
 
 	if _, ok := Config.Streams[id]; !ok {
 		Config.Streams[id] = StreamST{
+			ID: 	  id,
 			URL:      RTSP,
 			Display:  display,
 			Mic: 	  mic,
@@ -98,7 +100,16 @@ func Start(c *gin.Context) {
 		return
 	}
 
-	StreamWebRTC(id)
+	msg, err := StreamWebRTC(id)
+	if err != nil {
+		if len(msg) == 0 {
+			msg += "janus error: " + err.Error()
+		} else {
+			msg += ", " + err.Error()
+		}
+		MakeResponse(false, -9, msg, c)
+		return
+	}
 
 	MakeResponse(true, 1, fmt.Sprintf("Publish RTSP %s in Room %s successfully!", RTSP, room), c)
 }
@@ -106,7 +117,18 @@ func Start(c *gin.Context) {
 func Stop(c *gin.Context) {
 	id := c.PostForm("id")
 
-	if _, ok := Config.Streams[id]; ok {
+	if stream, ok := Config.Streams[id]; ok {
+		if stream.WebRTC == nil {
+			const message = "Destroy WebRTC resource failed: client does not exist!"
+			MakeResponse(true, 1, message, c)
+			return
+		}
+		err := stream.WebRTC.Close()
+		if err != nil {
+			var message = fmt.Sprintf("Destroy WebRTC resource failed: %s", err)
+			MakeResponse(true, 1, message, c)
+			return
+		}
 		delete(Config.Streams, id)
 
 		message := fmt.Sprintf("Stop ID %s successfully!", id)
@@ -128,18 +150,16 @@ func MakeResponse(success bool, code int, data string, c *gin.Context) {
 }
 
 //StreamWebRTC stream video over WebRTC
-func StreamWebRTC(uuid string) {
+func StreamWebRTC(uuid string) (string, error) {
 	if !Config.ext(uuid) {
-		log.Println("Stream Not Found")
-		return
+		return "", errors.New("stream Not Found")
 	}
 	stream := Config.Streams[uuid]
 
 	Config.RunIFNotRun(uuid)
 	codecs := Config.coGe(uuid)
 	if codecs == nil {
-		log.Println("Stream Codec Not Found")
-		return
+		return "", errors.New("stream Codec Not Found")
 	}
 	var AudioOnly bool
 	if len(codecs) == 1 && codecs[0].Type().IsAudio() {
@@ -150,11 +170,13 @@ func StreamWebRTC(uuid string) {
 		ICEUsername: Config.GetICEUsername(),
 		ICECredential: Config.GetICECredential(),
 	})
-	_, err := muxerWebRTC.WriteHeader(codecs, Config.Server.Janus, Config.Server.Room, stream.ID, stream.Display)
+
+	msg, err := muxerWebRTC.WriteHeader(codecs, Config.Server.Janus, Config.Server.Room, stream.ID, stream.Display)
 	if err != nil {
-		log.Println("WriteHeader", err)
-		return
+		return msg, err
 	}
+
+	stream.WebRTC = muxerWebRTC
 
 	go func() {
 		cid, ch := Config.clAd(uuid)
@@ -183,6 +205,8 @@ func StreamWebRTC(uuid string) {
 			}
 		}
 	}()
+
+	return "", nil
 }
 
 func CORSMiddleware() gin.HandlerFunc {
