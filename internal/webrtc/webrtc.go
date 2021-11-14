@@ -1,6 +1,7 @@
 package webrtc
 
 import (
+	gst "RTSPSender/internal/gstreamer-src"
 	"RTSPSender/internal/janus"
 	"bytes"
 	"errors"
@@ -34,6 +35,7 @@ type Muxer struct {
 	StreamACK *time.Timer
 	Options Options
 	Janus   *janus.Gateway
+	audio   *gst.Pipeline
 }
 
 type Stream struct {
@@ -132,43 +134,32 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 		}
 	}()
 
+	// Create an audio track
+	audioTrack, err := webrtc.NewTrackLocalStaticSample(
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus},
+		"audio",
+		"microphone",
+	)
+	if err != nil {
+		return "Audio track create failed", err
+	}
+	if _, err = peerConnection.AddTrack(audioTrack); err != nil {
+		return "Add audio track failed", err
+	}
+
 	for i, i2 := range streams {
 		var track *webrtc.TrackLocalStaticSample
 		if i2.Type().IsVideo() {
 			if i2.Type() == av.H264 {
 				track, err = webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{
 					MimeType: "video/h264",
-				}, "pion-rtsp-video", "pion-rtsp-video")
+				}, "video", "rtsp-video")
 				if err != nil {
 					return "Create track failed", err
 				}
 				if _, err = peerConnection.AddTrack(track); err != nil {
-					return "Add track failed", err
+					return "Add video track failed", err
 				}
-			}
-		} else if i2.Type().IsAudio() {
-			AudioCodecString := webrtc.MimeTypePCMA
-			switch i2.Type() {
-			case av.PCM_ALAW:
-				AudioCodecString = webrtc.MimeTypePCMA
-			case av.PCM_MULAW:
-				AudioCodecString = webrtc.MimeTypePCMU
-			case av.OPUS:
-				AudioCodecString = webrtc.MimeTypeOpus
-			default:
-				log.Println(ErrorIgnoreAudioTrack)
-				continue
-			}
-			track, err = webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{
-				MimeType:  AudioCodecString,
-				Channels:  uint16(i2.(av.AudioCodecData).ChannelLayout().Count()),
-				ClockRate: uint32(i2.(av.AudioCodecData).SampleRate()),
-			}, "pion-rtsp-audio", "pion-rtsp-audio")
-			if err != nil {
-				return "Create track failed", err
-			}
-			if _, err = peerConnection.AddTrack(track); err != nil {
-				return "Add track failed", err
 			}
 		}
 		element.streams[int8(i)] = &Stream{track: track, codec: i2}
@@ -253,7 +244,7 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 
 	msg, err := handle.Message(map[string]interface{}{
 		"request": "publish",
-		"audio":   false,
+		"audio":   true,
 		"video":   true,
 		"data":    false,
 	}, map[string]interface{}{
@@ -274,6 +265,12 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 			return fmt.Sprintf("No remote sdp found %s error", room), err
 		}
 		WriteHeaderSuccess = true
+
+		const audioPipelineDesc = "autoaudiosrc device=0 ! audioconvert"
+		audioPipeline := gst.CreatePipeline("opus", []*webrtc.TrackLocalStaticSample{audioTrack}, audioPipelineDesc)
+		audioPipeline.Start()
+		element.audio = audioPipeline
+
 		return "", nil
 	} else {
 		return fmt.Sprintf("No JSEP found %s error", room), err
@@ -336,6 +333,9 @@ func (element *Muxer) WritePacket(pkt av.Packet) (err error) {
 
 func (element *Muxer) Close() error {
 	element.stop = true
+	if element.audio != nil {
+		element.audio.Stop()
+	}
 	if element.pc != nil {
 		err := element.pc.Close()
 		if err != nil {
