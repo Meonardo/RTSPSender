@@ -146,7 +146,20 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 	}()
 
 	// Create an audio track
-	var hasAudio = len(mic) > 0
+	deviceInfo := mediadevices.EnumerateDevices()
+	var hasAudio = len(mic) > 0 && mic != "mute"
+	if len(deviceInfo) > 0 {
+		for _, device := range deviceInfo {
+			if device.Kind == mediadevices.AudioInput {
+				hasAudio = true
+				fmt.Println("Enumerated Audio Device: ", device)
+				break
+			}
+		}
+	} else {
+		hasAudio = false
+	}
+
 	if hasAudio && element.audioCodecSelector != nil {
 		s, err := mediadevices.GetUserMedia(mediadevices.MediaStreamConstraints{Codec: element.audioCodecSelector})
 		if err != nil {
