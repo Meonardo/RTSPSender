@@ -120,25 +120,21 @@ func Stop(c *gin.Context) {
 
 	if stream, ok := Config.Streams[id]; ok {
 		if stream.WebRTC == nil {
-			const message = "Destroy WebRTC resource failed: client does not exist!"
-			MakeResponse(true, 1, message, c)
+			MakeResponse(true, 1, "Destroy WebRTC resource failed: client does not exist!", c)
 			return
 		}
 		err := stream.WebRTC.Close()
 		if err != nil {
-			var message = fmt.Sprintf("Destroy WebRTC resource failed: %s", err)
-			MakeResponse(true, 1, message, c)
+			MakeResponse(true, 1, fmt.Sprintf("Destroy WebRTC resource failed: %s", err), c)
 			return
 		}
 		delete(Config.Streams, id)
 
-		message := fmt.Sprintf("Stop ID %s successfully!", id)
-		MakeResponse(true, 1, message, c)
+		MakeResponse(true, 1, fmt.Sprintf("Stop ID %s successfully!", id), c)
 		return
 	}
 
-	message := fmt.Sprintf("ID %s not found!", id)
-	MakeResponse(false, -1, message, c)
+	MakeResponse(false, -1, fmt.Sprintf("ID %s not found!", id), c)
 	return
 }
 
@@ -172,7 +168,7 @@ func StreamWebRTC(uuid string) (string, error) {
 		ICECredential: Config.GetICECredential(),
 	})
 
-	msg, err := muxerWebRTC.WriteHeader(codecs, Config.Server.Janus, Config.Server.Room, stream.ID, stream.Display)
+	msg, err := muxerWebRTC.WriteHeader(codecs, Config.Server.Janus, Config.Server.Room, stream.ID, stream.Display, stream.Mic)
 	if err != nil {
 		return msg, err
 	}

@@ -2,6 +2,7 @@ package webrtc
 
 import (
 	"RTSPSender/internal/janus"
+	"RTSPSender/mediadevices"
 	"bytes"
 	"errors"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"github.com/pion/interceptor"
 	"github.com/pion/webrtc/v3"
 
+	"RTSPSender/mediadevices/pkg/codec/opus"          // This is required to use opus audio encoder
+	_ "RTSPSender/mediadevices/pkg/driver/microphone" // This is required to register microphone adapter
 	"github.com/deepch/vdk/av"
 	"github.com/deepch/vdk/codec/h264parser"
 	"github.com/pion/webrtc/v3/pkg/media"
@@ -30,6 +33,7 @@ type Muxer struct {
 	status    webrtc.ICEConnectionState
 	stop      bool
 	pc        *webrtc.PeerConnection
+	audioCodecSelector *mediadevices.CodecSelector
 	ClientACK *time.Timer
 	StreamACK *time.Timer
 	Options Options
@@ -105,12 +109,21 @@ func (element *Muxer) NewPeerConnection(configuration webrtc.Configuration) (*we
 		}
 		log.Println("Set UDP ports to", element.Options.PortMin, "..", element.Options.PortMax)
 	}
+
+	opusParams, err := opus.NewParams()
+	if err != nil {
+		log.Printf("Create opus params failed %s", err)
+	}
+	audioCodecSelector := mediadevices.NewCodecSelector(mediadevices.WithAudioEncoders(&opusParams))
+	audioCodecSelector.Populate(m)
+	element.audioCodecSelector = audioCodecSelector
+
 	api := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(i), webrtc.WithSettingEngine(s))
 	return api.NewPeerConnection(configuration)
 }
 
 func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
-	room string, id string, display string) (string, error) {
+	room string, id string, display string, mic string) (string, error) {
 
 	var WriteHeaderSuccess bool
 	if len(streams) == 0 {
@@ -133,17 +146,32 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 	}()
 
 	// Create an audio track
-	//audioTrack, err := webrtc.NewTrackLocalStaticSample(
-	//	webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus},
-	//	"audio",
-	//	"microphone",
-	//)
-	//if err != nil {
-	//	return "Audio track create failed", err
-	//}
-	//if _, err = peerConnection.AddTrack(audioTrack); err != nil {
-	//	return "Add audio track failed", err
-	//}
+	var hasAudio = len(mic) > 0
+	if hasAudio && element.audioCodecSelector != nil {
+		s, err := mediadevices.GetUserMedia(mediadevices.MediaStreamConstraints{Codec: element.audioCodecSelector})
+		if err != nil {
+			return "Audio track create failed", err
+		}
+
+		for _, track := range s.GetTracks() {
+			track.OnEnded(func(err error) {
+				fmt.Printf("Track (ID: %s) ended with error: %v\n",
+					track.ID(), err)
+			})
+
+			rtpSender, err := peerConnection.AddTransceiverFromTrack(track,
+				webrtc.RTPTransceiverInit{
+					Direction: webrtc.RTPTransceiverDirectionSendonly,
+				},
+			)
+			if err != nil {
+				return "Add audio track create failed", err
+			}
+			if rtpSender.Kind() == webrtc.RTPCodecTypeAudio {
+				break
+			}
+		}
+	}
 
 	for i, i2 := range streams {
 		var track *webrtc.TrackLocalStaticSample
@@ -242,7 +270,7 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 
 	msg, err := handle.Message(map[string]interface{}{
 		"request": "publish",
-		"audio":   true,
+		"audio":   hasAudio,
 		"video":   true,
 		"data":    false,
 	}, map[string]interface{}{
@@ -332,9 +360,13 @@ func (element *Muxer) Close() error {
 			return err
 		}
 	}
-	err := element.Janus.Close()
-	if err != nil {
-		return err
+
+	if element.Janus != nil {
+		err := element.Janus.Close()
+		if err != nil {
+			return err
+		}
 	}
+
 	return nil
 }
