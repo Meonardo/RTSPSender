@@ -3,6 +3,7 @@ package webrtc
 import (
 	"RTSPSender/internal/janus"
 	"RTSPSender/mediadevices"
+	"RTSPSender/mediadevices/pkg/driver"
 	"bytes"
 	"errors"
 	"fmt"
@@ -34,6 +35,7 @@ type Muxer struct {
 	stop      bool
 	pc        *webrtc.PeerConnection
 	audioCodecSelector *mediadevices.CodecSelector
+
 	ClientACK *time.Timer
 	StreamACK *time.Timer
 	Options Options
@@ -146,22 +148,30 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 	}()
 
 	// Create an audio track
-	deviceInfo := mediadevices.EnumerateDevices()
 	var hasAudio = len(mic) > 0 && mic != "mute"
-	if len(deviceInfo) > 0 {
-		for _, device := range deviceInfo {
-			if device.Kind == mediadevices.AudioInput {
-				hasAudio = true
-				fmt.Println("Enumerated Audio Device: ", device)
-				break
+	if hasAudio {
+		deviceInfo := mediadevices.EnumerateDevices()
+		if len(deviceInfo) > 0 {
+			for _, device := range deviceInfo {
+				if device.Kind == mediadevices.AudioInput {
+					hasAudio = true
+					fmt.Println("Found Audio Device: ", device)
+					break
+				} else {
+					hasAudio = false
+				}
 			}
+		} else {
+			hasAudio = false
 		}
-	} else {
-		hasAudio = false
 	}
 
 	if hasAudio && element.audioCodecSelector != nil {
-		s, err := mediadevices.GetUserMedia(mediadevices.MediaStreamConstraints{Codec: element.audioCodecSelector})
+		s, err := mediadevices.GetUserMedia(mediadevices.MediaStreamConstraints{
+			Audio: func(c *mediadevices.MediaTrackConstraints) {},
+			Codec: element.audioCodecSelector,
+		})
+
 		if err != nil {
 			return "Audio track create failed", err
 		}
@@ -367,10 +377,19 @@ func (element *Muxer) WritePacket(pkt av.Packet) (err error) {
 
 func (element *Muxer) Close() error {
 	element.stop = true
+
 	if element.pc != nil {
 		err := element.pc.Close()
 		if err != nil {
 			return err
+		}
+	}
+
+	audioDrivers := driver.GetManager().Query(driver.FilterAudioRecorder())
+	for _, d := range audioDrivers {
+		err := d.Close()
+		if err != nil {
+			log.Println("Close driver failed", err)
 		}
 	}
 
