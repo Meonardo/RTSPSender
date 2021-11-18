@@ -178,8 +178,11 @@ func StreamWebRTC(uuid string) (string, error) {
 
 	go func() {
 		cid, ch := Config.clAd(uuid)
+
+		defer reconnect(uuid)
 		defer Config.clDe(uuid, cid)
 		defer muxerWebRTC.Close()
+
 		var videoStart bool
 		noVideo := time.NewTimer(10 * time.Second)
 		for {
@@ -205,6 +208,16 @@ func StreamWebRTC(uuid string) (string, error) {
 	}()
 
 	return "", nil
+}
+
+func reconnect(uuid string) {
+	log.Println("Prepare to reconnect: ", uuid)
+
+	msg, err := StreamWebRTC(uuid)
+
+	if err != nil {
+		log.Printf("Reconnect error: %s, msg: %s", err, msg)
+	}
 }
 
 func CORSMiddleware() gin.HandlerFunc {
