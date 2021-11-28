@@ -386,6 +386,7 @@ func (element *Muxer) Close() {
 		if err != nil {
 			log.Println("Close janus ws failed", err)
 		}
+		element.Janus = nil
 	}
 
 	if element.pc != nil {
@@ -393,6 +394,7 @@ func (element *Muxer) Close() {
 		if err != nil {
 			log.Println("Close pc failed", err)
 		}
+		element.pc = nil
 	}
 
 	audioDrivers := driver.GetManager().Query(driver.FilterAudioRecorder())

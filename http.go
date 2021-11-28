@@ -119,16 +119,19 @@ func Stop(c *gin.Context) {
 	id := c.PostForm("id")
 
 	if stream, ok := Config.Streams[id]; ok {
-		if stream.WebRTC == nil {
-			MakeResponse(true, 1, "Destroy WebRTC resource failed: client does not exist!", c)
-			return
+		// destroy webrtc client
+		if stream.WebRTC != nil {
+			stream.WebRTC.Close()
+			stream.WebRTC = nil
+		} else {
+			log.Println("Destroy WebRTC resource failed: client does not exist! exec anyway")
 		}
 		// close RTSP connection
 		if stream.Client != nil {
 			stream.Client.Close()
+			stream.Client = nil
+			log.Printf("Close RTSP(%s) working-thread\n", stream.URL)
 		}
-		// destroy webrtc client
-		stream.WebRTC.Close()
 		delete(Config.Streams, id)
 
 		MakeResponse(true, 1, fmt.Sprintf("Stop ID %s successfully!", id), c)

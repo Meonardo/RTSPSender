@@ -31,6 +31,7 @@ func newRequest(method string) (map[string]interface{}, chan interface{}) {
 type Gateway struct {
 	// Sessions is a map of the currently active sessions to the gateway.
 	Sessions map[uint64]*Session
+	Closed bool
 
 	// Access to the Sessions map should be synchronized with the Gateway.Lock()
 	// and Gateway.Unlock() methods provided by the embeded sync.Mutex.
@@ -73,6 +74,11 @@ func Connect(wsURL string) (*Gateway, error) {
 
 // Close closes the underlying connection to the Gateway.
 func (gateway *Gateway) Close() error {
+	for k := range gateway.Sessions {
+		delete(gateway.Sessions, k)
+	}
+
+	gateway.Closed = true
 	return gateway.conn.Close()
 }
 
@@ -129,6 +135,9 @@ func (gateway *Gateway) ping() {
 	for {
 		select {
 		case <-ticker.C:
+			if gateway.Closed {
+				return
+			}
 			err := gateway.conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(20*time.Second))
 			if err != nil {
 				select {
