@@ -140,10 +140,7 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 	}
 	defer func() {
 		if !WriteHeaderSuccess {
-			err = element.Close()
-			if err != nil {
-				log.Println(err)
-			}
+			element.Close()
 		}
 	}()
 
@@ -262,6 +259,9 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 
 	go func() {
 		for {
+			if element.stop {
+				return
+			}
 			if _, keepAliveErr := session.KeepAlive(); keepAliveErr != nil {
 				log.Printf("Can not send keep-alive msg to janus %s", keepAliveErr)
 				return
@@ -323,6 +323,9 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 
 func (element *Muxer) WritePacket(pkt av.Packet) (err error) {
 	//log.Println("WritePacket", pkt.Time, element.stop, webrtc.ICEConnectionStateConnected, pkt.Idx, element.streams[pkt.Idx])
+	if element.stop {
+		return nil
+	}
 	var WritePacketSuccess bool
 	defer func() {
 		if !WritePacketSuccess {
@@ -375,13 +378,20 @@ func (element *Muxer) WritePacket(pkt av.Packet) (err error) {
 	}
 }
 
-func (element *Muxer) Close() error {
+func (element *Muxer) Close() {
 	element.stop = true
+
+	if element.Janus != nil {
+		err := element.Janus.Close()
+		if err != nil {
+			log.Println("Close janus ws failed", err)
+		}
+	}
 
 	if element.pc != nil {
 		err := element.pc.Close()
 		if err != nil {
-			return err
+			log.Println("Close pc failed", err)
 		}
 	}
 
@@ -392,13 +402,4 @@ func (element *Muxer) Close() error {
 			log.Println("Close driver failed", err)
 		}
 	}
-
-	if element.Janus != nil {
-		err := element.Janus.Close()
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
 }

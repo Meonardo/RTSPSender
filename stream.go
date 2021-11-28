@@ -60,6 +60,7 @@ func RTSPWorker(name, url string, OnDemand, DisableAudio, Debug bool) error {
 		case <-clientTest.C:
 			if OnDemand {
 				if !Config.HasViewer(name) {
+					log.Println("no viewer at ", url)
 					return ErrorStreamExitNoViewer
 				} else {
 					clientTest.Reset(20 * time.Second)

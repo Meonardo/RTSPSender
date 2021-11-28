@@ -4,6 +4,7 @@ import (
 	"RTSPSender/internal/webrtc"
 	"crypto/rand"
 	"fmt"
+	"github.com/deepch/vdk/format/rtspv2"
 	"log"
 	"sync"
 	"time"
@@ -48,6 +49,7 @@ type StreamST struct {
 	Codecs       []av.CodecData
 	WebRTC 		 *webrtc.Muxer
 	Cl           map[string]viewer
+	Client	     *rtspv2.RTSPClient
 }
 
 type viewer struct {
@@ -102,6 +104,14 @@ func (element *ConfigST) GetICECredential() string {
 	element.mutex.Lock()
 	defer element.mutex.Unlock()
 	return element.Server.ICECredential
+}
+
+func (element *ConfigST) AddClient(uuid string, c *rtspv2.RTSPClient) {
+	element.mutex.Lock()
+	defer element.mutex.Unlock()
+	t := element.Streams[uuid]
+	t.Client = c
+	element.Streams[uuid] = t
 }
 
 func (element *ConfigST) cast(uuid string, pck av.Packet) {

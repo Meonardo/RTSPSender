@@ -123,11 +123,12 @@ func Stop(c *gin.Context) {
 			MakeResponse(true, 1, "Destroy WebRTC resource failed: client does not exist!", c)
 			return
 		}
-		err := stream.WebRTC.Close()
-		if err != nil {
-			MakeResponse(true, 1, fmt.Sprintf("Destroy WebRTC resource failed: %s", err), c)
-			return
+		// close RTSP connection
+		if stream.Client != nil {
+			stream.Client.Close()
 		}
+		// destroy webrtc client
+		stream.WebRTC.Close()
 		delete(Config.Streams, id)
 
 		MakeResponse(true, 1, fmt.Sprintf("Stop ID %s successfully!", id), c)
@@ -151,9 +152,10 @@ func StreamWebRTC(uuid string) (string, error) {
 	if !Config.ext(uuid) {
 		return "", errors.New("stream Not Found")
 	}
-	stream := Config.Streams[uuid]
 
+	stream := Config.Streams[uuid]
 	Config.RunIFNotRun(uuid)
+
 	codecs := Config.coGe(uuid)
 	if codecs == nil {
 		return "", errors.New("stream Codec Not Found")
@@ -179,7 +181,7 @@ func StreamWebRTC(uuid string) (string, error) {
 	go func() {
 		cid, ch := Config.clAd(uuid)
 
-		defer reconnect(uuid)
+		//defer reconnect(uuid)
 		defer Config.clDe(uuid, cid)
 		defer muxerWebRTC.Close()
 
