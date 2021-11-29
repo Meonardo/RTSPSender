@@ -125,7 +125,7 @@ func (element *Muxer) NewPeerConnection(configuration webrtc.Configuration) (*we
 }
 
 func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
-	room string, id string, display string, mic string) (string, error) {
+	room string, id string, display string, mic string, pin string) (string, error) {
 
 	var WriteHeaderSuccess bool
 	if len(streams) == 0 {
@@ -170,7 +170,7 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 		})
 
 		if err != nil {
-			return "Audio track create failed", err
+			fmt.Printf("Audio track create failed %s", err)
 		}
 
 		for _, track := range s.GetTracks() {
@@ -285,7 +285,7 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 		"room":    roomNum,
 		"id":      publisherID,
 		"display":	display,
-		"pin": room,
+		"pin": pin,
 	}, nil)
 	if err != nil {
 		return fmt.Sprintf("Join room %s failed", room), err
@@ -323,9 +323,6 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 
 func (element *Muxer) WritePacket(pkt av.Packet) (err error) {
 	//log.Println("WritePacket", pkt.Time, element.stop, webrtc.ICEConnectionStateConnected, pkt.Idx, element.streams[pkt.Idx])
-	if element.stop {
-		return nil
-	}
 	var WritePacketSuccess bool
 	defer func() {
 		if !WritePacketSuccess {
@@ -382,6 +379,12 @@ func (element *Muxer) Close() {
 	element.stop = true
 
 	if element.Janus != nil {
+		for _, v := range element.Janus.Sessions {
+			_, err := v.Destroy()
+			if err != nil {
+				log.Println("Destroy janus session failed", err)
+			}
+		}
 		err := element.Janus.Close()
 		if err != nil {
 			log.Println("Close janus ws failed", err)

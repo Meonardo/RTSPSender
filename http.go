@@ -2,6 +2,7 @@ package main
 
 import (
 	"RTSPSender/internal/webrtc"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -22,11 +23,98 @@ func serveHTTP() {
 
 	router.POST("/camera/push/stop", Stop)
 	router.POST("/camera/push/start", Start)
+	router.POST("/camera/push/configure", Configure)
 
 	err := router.Run(port)
 	if err != nil {
 		log.Fatalln("Start HTTP Server error", err)
 	}
+}
+
+func Configure(c *gin.Context) {
+	configs := c.PostForm("configs")
+	if len(configs) == 0 {
+		MakeResponse(false, -1, "Missing mandatory field `configs`!", c)
+		return
+	}
+	log.Println("Configure Request, params: ", configs)
+
+	var jsonMap map[string]interface{}
+	err := json.Unmarshal([]byte(configs), &jsonMap)
+	if err != nil {
+		MakeResponse(false, -2, "Decode JSON object failed!", c)
+		return
+	}
+
+	server := jsonMap["server"].(map[string]interface{})
+
+	janus := server["janus"].(string)
+	if len(janus) == 0 {
+		MakeResponse(false, -3, "Missing janus server address", c)
+		return
+	}
+
+	ices := server["ice_servers"].([]interface{})
+	iceServers := make([]string, len(ices))
+	for i, v := range ices {
+		iceServers[i] = v.(string)
+	}
+
+	iceUsername := server["ice_username"].(string)
+	icePasswd := server["ice_credential"].(string)
+
+	if len(iceServers) == 0 || len(iceUsername) == 0 || len(icePasswd) == 0 {
+		MakeResponse(false, -4, "Missing ICE servers", c)
+		return
+	}
+
+	ser := ServerST{
+		janus,
+		port,
+		iceServers,
+		iceUsername,
+		icePasswd,
+	}
+	if ser.Janus == Config.Server.Janus {
+		MakeResponse(false, -6, "Please do NOT configure twice!", c)
+		return
+	} else {
+		Config.Server = ser
+	}
+
+	if len(Config.Streams) == 0 {
+		Config.Streams = make(map[string]StreamST)
+	}
+
+	var failedTimes = 0
+	streams := jsonMap["streams"].([]interface{})
+	for _, s := range streams {
+		stream := s.(map[string]interface{})
+		id := stream["id"].(string)
+		rtsp := stream["url"].(string)
+		if len(id) == 0 || len(rtsp) == 0 {
+			failedTimes ++
+			continue
+		}
+		if _, ok := Config.Streams[id]; !ok {
+			Config.Streams[id] = StreamST{
+				ID: 	  id,
+				URL:      rtsp,
+				OnDemand: false,
+				DisableAudio: true,
+				Cl:       make(map[string]viewer),
+			}
+		}
+	}
+	if failedTimes > 0 {
+		MakeResponse(false, -5, "Please configure RTSP camera id & URL", c)
+		return
+	}
+
+	// 预先启动 RTSP worker
+	go serveStreams()
+
+	MakeResponse(true, 1, fmt.Sprintf("Configure {%s} successfully!", configs), c)
 }
 
 func Start(c *gin.Context) {
@@ -38,7 +126,7 @@ func Start(c *gin.Context) {
 
 	id := c.PostForm("id")
 	if len(id) == 0 {
-		MakeResponse(false, -5, "Please input display name", c)
+		MakeResponse(false, -5, "Please input camera ID", c)
 		return
 	}
 
@@ -47,56 +135,18 @@ func Start(c *gin.Context) {
 		MakeResponse(false, -4, "Please input display name", c)
 		return
 	}
-	var mic = "mute"
-	mic = c.PostForm("mic")
 
-	RTSP := c.PostForm("rtsp")
-	if len(RTSP) == 0 {
-		MakeResponse(false, -3, "Please input RTSP stream address", c)
-		return
-	}
+	mic := c.PostForm("mic")
 
-	janus := c.PostForm("janus")
-	if len(janus) == 0 {
-		MakeResponse(false, -2, "Please input janus server address", c)
-		return
-	}
-
-	turnServer := c.PostForm("turn_server")
-	turnPasswd := c.PostForm("turn_passwd")
-	turnUser := c.PostForm("turn_user")
-	stunServer := c.PostForm("stun_server")
-
-	if len(turnServer) == 0 || len(turnPasswd) == 0 || len(turnUser) == 0 {
-		MakeResponse(false, -2, "Please set ICE servers", c)
-		return
-	}
-
-	Config.Server = ServerST{
-		room,
-		janus,
-		port,
-		[]string{stunServer, turnServer},
-		turnUser,
-		turnPasswd,
-	}
-
-	if len(Config.Streams) == 0 {
-		Config.Streams = make(map[string]StreamST)
-	}
-
-	if _, ok := Config.Streams[id]; !ok {
-		Config.Streams[id] = StreamST{
-			ID: 	  id,
-			URL:      RTSP,
-			Display:  display,
-			Mic: 	  mic,
-			OnDemand: true,
-			DisableAudio: true,
-			Cl:       make(map[string]viewer),
-		}
+	if tmp, ok := Config.Streams[id]; ok {
+		tmp.Room = room
+		tmp.Mic = mic
+		tmp.Pin = room
+		tmp.Display = display
+		Config.Streams[id] = tmp
 	} else {
-		MakeResponse(false, -7, "Stream already published", c)
+		msg := fmt.Sprintf("Camera(%s) not config yet!", id)
+		MakeResponse(false, -5, msg, c)
 		return
 	}
 
@@ -112,7 +162,7 @@ func Start(c *gin.Context) {
 		return
 	}
 
-	MakeResponse(true, 1, fmt.Sprintf("Publish RTSP %s in Room %s successfully!", RTSP, room), c)
+	MakeResponse(true, 1, fmt.Sprintf("Publish camera %s in Room %s successfully!", id, room), c)
 }
 
 func Stop(c *gin.Context) {
@@ -132,7 +182,7 @@ func Stop(c *gin.Context) {
 			stream.Client = nil
 			log.Printf("Close RTSP(%s) working-thread\n", stream.URL)
 		}
-		delete(Config.Streams, id)
+		//delete(Config.Streams, id)
 
 		MakeResponse(true, 1, fmt.Sprintf("Stop ID %s successfully!", id), c)
 		return
@@ -173,7 +223,7 @@ func StreamWebRTC(uuid string) (string, error) {
 		ICECredential: Config.GetICECredential(),
 	})
 
-	msg, err := muxerWebRTC.WriteHeader(codecs, Config.Server.Janus, Config.Server.Room, stream.ID, stream.Display, stream.Mic)
+	msg, err := muxerWebRTC.WriteHeader(codecs, Config.Server.Janus, stream.Room, stream.ID, stream.Display, stream.Mic, stream.Pin)
 	if err != nil {
 		return msg, err
 	}

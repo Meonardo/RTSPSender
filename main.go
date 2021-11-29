@@ -9,6 +9,7 @@ import (
 
 func main() {
 	go serveHTTP()
+	go serveStreams()
 
 	sigs := make(chan os.Signal, 1)
 	done := make(chan bool, 1)

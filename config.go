@@ -4,14 +4,12 @@ import (
 	"RTSPSender/internal/webrtc"
 	"crypto/rand"
 	"fmt"
+	"github.com/deepch/vdk/av"
+	"github.com/deepch/vdk/codec/h264parser"
 	"github.com/deepch/vdk/format/rtspv2"
 	"log"
 	"sync"
 	"time"
-
-	"github.com/deepch/vdk/codec/h264parser"
-
-	"github.com/deepch/vdk/av"
 )
 
 //Config global
@@ -27,7 +25,6 @@ type ConfigST struct {
 
 //ServerST struct
 type ServerST struct {
-	Room		  string   `json:"room"`
 	Janus		  string	`json:"janus"`
 	HTTPPort      string   `json:"http_port"`
 	ICEServers    []string `json:"ice_servers"`
@@ -37,7 +34,9 @@ type ServerST struct {
 
 //StreamST struct
 type StreamST struct {
-	ID			 string `json:"id"`
+	Room		 string   `json:"room"`
+	Pin 		 string   `json:"pin"`
+	ID			 string   `json:"id"`
 	Display		 string `json:"display"`
 	Mic 		 string `json:"mic"`
 	URL          string `json:"url"`
