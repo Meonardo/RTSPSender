@@ -4,11 +4,13 @@ import (
 	"RTSPSender/internal/janus"
 	"RTSPSender/mediadevices"
 	"RTSPSender/mediadevices/pkg/driver"
+	"RTSPSender/mediadevices/pkg/prop"
 	"bytes"
 	"errors"
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pion/interceptor"
@@ -146,12 +148,14 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 
 	// Create an audio track
 	var hasAudio = len(mic) > 0 && mic != "mute"
+	var deviceID = ""
 	if hasAudio {
 		deviceInfo := mediadevices.EnumerateDevices()
 		if len(deviceInfo) > 0 {
 			for _, device := range deviceInfo {
-				if device.Kind == mediadevices.AudioInput {
+				if device.Kind == mediadevices.AudioInput && strings.Contains(device.Name, mic) {
 					hasAudio = true
+					deviceID = device.DeviceID
 					fmt.Println("Found Audio Device: ", device)
 					break
 				} else {
@@ -164,13 +168,16 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 	}
 
 	if hasAudio && element.audioCodecSelector != nil {
+		log.Printf("Selected Audio ID %s", deviceID)
 		s, err := mediadevices.GetUserMedia(mediadevices.MediaStreamConstraints{
-			Audio: func(c *mediadevices.MediaTrackConstraints) {},
+			Audio: func(c *mediadevices.MediaTrackConstraints) {
+				c.DeviceID = prop.String(deviceID)
+			},
 			Codec: element.audioCodecSelector,
 		})
 
 		if err != nil {
-			fmt.Printf("Audio track create failed %s", err)
+			return "Audio track create failed", err
 		}
 
 		for _, track := range s.GetTracks() {

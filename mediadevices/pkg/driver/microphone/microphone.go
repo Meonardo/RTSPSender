@@ -8,12 +8,12 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/gen2brain/malgo"
 	"RTSPSender/mediadevices/internal/logging"
 	"RTSPSender/mediadevices/pkg/driver"
 	"RTSPSender/mediadevices/pkg/io/audio"
 	"RTSPSender/mediadevices/pkg/prop"
 	"RTSPSender/mediadevices/pkg/wave"
+	"github.com/gen2brain/malgo"
 )
 
 const (
@@ -58,6 +58,9 @@ func init() {
 			}
 			driver.GetManager().Register(newMicrophone(info), driver.Info{
 				Label:      device.ID.String(),
+				Name:         device.Name(),
+				Manufacturer: "",
+				ModelID:      "",
 				DeviceType: driver.Microphone,
 				Priority:   priority,
 			})

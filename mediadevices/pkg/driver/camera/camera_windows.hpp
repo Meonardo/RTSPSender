@@ -6,18 +6,16 @@
 extern "C" {
 #endif
 
-typedef struct
-{
+typedef struct {
   int width;
   int height;
   uint32_t fcc;
 } imageProp;
 
-typedef struct
-{
+typedef struct {
   int width;
   int height;
-  size_t buf;  // uintptr
+  size_t buf; // uintptr
 
   char* name;
   int numProps;
@@ -28,8 +26,7 @@ typedef struct
   void* callback;
 } camera;
 
-typedef struct
-{
+typedef struct {
   int num;
   char** name;
 } cameraList;
@@ -40,13 +37,11 @@ int listResolution(camera* cam, const char** errstr);
 int listCamera(cameraList* list, const char** errstr);
 int freeCameraList(cameraList* list, const char** errstr);
 
-inline imageProp* getProp(camera* cam, int i)
-{
+inline imageProp* getProp(camera* cam, int i) {
   return &cam->props[i];
 }
 
-inline char* getName(cameraList* list, int i)
-{
+inline char* getName(cameraList* list, int i) {
   return list->name[i];
 }
 
@@ -58,46 +53,35 @@ inline char* getName(cameraList* list, int i)
 #include <windows.h>
 #include <string>
 #include <dshow.h>
+#include <comutil.h>
+#include <oleauto.h>
+
 std::string utf16Decode(LPOLESTR olestr);
-IPin* getPin(IBaseFilter* filter, PIN_DIRECTION dir);
-char* getCameraName(IMoniker* monier);
+IPin* getPin(IBaseFilter *filter, PIN_DIRECTION dir);
+char* getCameraName(IMoniker* moniker);
 
 template <class T>
-void safeRelease(T** p)
-{
-  if (*p)
-  {
+void safeRelease(T** p) {
+  if (*p) {
     (*p)->Release();
     *p = nullptr;
   }
 }
 
-class SampleGrabberCallback : public ISampleGrabberCB
-{
+class SampleGrabberCallback : public ISampleGrabberCB {
 private:
   camera* cam_;
 
 public:
-  inline SampleGrabberCallback(camera* cam)
-    : cam_(cam)
-  {
-  }
+  inline SampleGrabberCallback(camera* cam) : cam_(cam) {}
 
   HRESULT SampleCB(double sampleTime, IMediaSample* sample) final;
   HRESULT BufferCB(double sampleTime, BYTE* buffer, LONG bufferLen) final;
 
-  inline ULONG STDMETHODCALLTYPE AddRef() final
-  {
-    return 2;
-  }
-  inline ULONG STDMETHODCALLTYPE Release() final
-  {
-    return 1;
-  }
-  inline HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) final
-  {
-    if (riid == IID_ISampleGrabberCB || riid == IID_IUnknown)
-    {
+  inline ULONG STDMETHODCALLTYPE AddRef() final { return 2; }
+  inline ULONG STDMETHODCALLTYPE Release() final { return 1; }
+  inline HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) final {
+    if (riid == IID_ISampleGrabberCB || riid == IID_IUnknown) {
       *ppv = (void*)static_cast<ISampleGrabberCB*>(this);
       return NOERROR;
     }

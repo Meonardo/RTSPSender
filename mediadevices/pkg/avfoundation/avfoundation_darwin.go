@@ -14,9 +14,6 @@ import (
 	"fmt"
 	"io"
 	"unsafe"
-
-	"RTSPSender/mediadevices/pkg/frame"
-	"RTSPSender/mediadevices/pkg/prop"
 )
 
 type MediaType C.AVBindMediaType
@@ -30,8 +27,12 @@ const (
 // underlying device given by AVFoundation
 type Device struct {
 	// UID is a unique identifier for a device
-	UID     string
-	cDevice C.AVBindDevice
+	UID          string
+	Name         string
+	Label        string
+	Manufacturer string
+	ModelID      string
+	cDevice      C.AVBindDevice
 }
 
 func frameFormatToAVBind(f frame.Format) (C.AVBindFrameFormat, bool) {
@@ -84,6 +85,10 @@ func Devices(mediaType MediaType) ([]Device, error) {
 
 	for i := range devices {
 		devices[i].UID = C.GoString(&cDevices[i].uid[0])
+		devices[i].Name = C.GoString(&cDevices[i].name[0])
+		devices[i].Label = C.GoString(&cDevices[i].name[0])
+		devices[i].Manufacturer = C.GoString(&cDevices[i].manufacturer[0])
+		devices[i].ModelID = C.GoString(&cDevices[i].modelID[0])
 		devices[i].cDevice = cDevices[i]
 	}
 
@@ -219,3 +224,4 @@ func (session *Session) Properties() []prop.Media {
 	}
 	return properties
 }
+

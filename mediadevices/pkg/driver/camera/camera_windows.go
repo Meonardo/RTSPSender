@@ -12,7 +12,6 @@ import (
 	"sync"
 	"unsafe"
 
-	"RTSPSender/mediadevices/pkg/driver"
 	"RTSPSender/mediadevices/pkg/frame"
 	"RTSPSender/mediadevices/pkg/io/video"
 	"RTSPSender/mediadevices/pkg/prop"
@@ -24,11 +23,14 @@ var (
 )
 
 type camera struct {
-	name  string
-	cam   *C.camera
-	ch    chan []byte
-	buf   []byte
-	bufGo []byte
+	name         string
+	friendlyName string
+	description  string
+	devicePath   string
+	cam          *C.camera
+	ch           chan []byte
+	buf          []byte
+	bufGo        []byte
 }
 
 func init() {
@@ -43,7 +45,8 @@ func init() {
 	}
 
 	for i := 0; i < int(list.num); i++ {
-		name := C.GoString(C.getName(&list, C.int(i)))
+		w := C.getName(&list, C.int(i))
+		name := C.GoString(w)
 		driver.GetManager().Register(&camera{name: name}, driver.Info{
 			Label:      name,
 			DeviceType: driver.Camera,
