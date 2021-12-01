@@ -3,14 +3,12 @@ package webrtc
 import (
 	"RTSPSender/internal/janus"
 	"RTSPSender/mediadevices"
-	"RTSPSender/mediadevices/pkg/driver"
 	"RTSPSender/mediadevices/pkg/prop"
 	"bytes"
 	"errors"
 	"fmt"
 	"log"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/pion/interceptor"
@@ -37,6 +35,7 @@ type Muxer struct {
 	stop      bool
 	pc        *webrtc.PeerConnection
 	audioCodecSelector *mediadevices.CodecSelector
+	audioDeviceID string
 
 	ClientACK *time.Timer
 	StreamACK *time.Timer
@@ -153,10 +152,10 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 		deviceInfo := mediadevices.EnumerateDevices()
 		if len(deviceInfo) > 0 {
 			for _, device := range deviceInfo {
-				if device.Kind == mediadevices.AudioInput && strings.Contains(device.Name, mic) {
+				if device.Kind == mediadevices.AudioInput && device.Name == mic {
 					hasAudio = true
 					deviceID = device.DeviceID
-					fmt.Println("Found Audio Device: ", device)
+					fmt.Printf("Found Audio Device: %s, name: %s", device, device.Name)
 					break
 				} else {
 					hasAudio = false
@@ -168,7 +167,6 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 	}
 
 	if hasAudio && element.audioCodecSelector != nil {
-		log.Printf("Selected Audio ID %s", deviceID)
 		s, err := mediadevices.GetUserMedia(mediadevices.MediaStreamConstraints{
 			Audio: func(c *mediadevices.MediaTrackConstraints) {
 				c.DeviceID = prop.String(deviceID)
@@ -180,23 +178,16 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 			return "Audio track create failed", err
 		}
 
-		for _, track := range s.GetTracks() {
-			track.OnEnded(func(err error) {
-				fmt.Printf("Track (ID: %s) ended with error: %v\n",
-					track.ID(), err)
-			})
+		element.audioDeviceID = deviceID
+		audioTrack := s.GetAudioTracks()[0].(*mediadevices.AudioTrack)
+		_, err = peerConnection.AddTransceiverFromTrack(audioTrack,
+			webrtc.RTPTransceiverInit{
+				Direction: webrtc.RTPTransceiverDirectionSendonly,
+			},
+		)
 
-			rtpSender, err := peerConnection.AddTransceiverFromTrack(track,
-				webrtc.RTPTransceiverInit{
-					Direction: webrtc.RTPTransceiverDirectionSendonly,
-				},
-			)
-			if err != nil {
-				return "Add audio track create failed", err
-			}
-			if rtpSender.Kind() == webrtc.RTPCodecTypeAudio {
-				break
-			}
+		if err != nil {
+			return "Add audio track failed", err
 		}
 	}
 
@@ -223,9 +214,6 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 	}
 	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
 		element.status = connectionState
-		if connectionState == webrtc.ICEConnectionStateDisconnected {
-			element.Close()
-		}
 	})
 
 	gatherCompletePromise := webrtc.GatheringCompletePromise(peerConnection)
@@ -383,15 +371,13 @@ func (element *Muxer) WritePacket(pkt av.Packet) (err error) {
 }
 
 func (element *Muxer) Close() {
+	if element.stop {
+		log.Println("This WebRTC instance is stopping, please wait...")
+		return
+	}
 	element.stop = true
 
 	if element.Janus != nil {
-		for _, v := range element.Janus.Sessions {
-			_, err := v.Destroy()
-			if err != nil {
-				log.Println("Destroy janus session failed", err)
-			}
-		}
 		err := element.Janus.Close()
 		if err != nil {
 			log.Println("Close janus ws failed", err)
@@ -399,19 +385,24 @@ func (element *Muxer) Close() {
 		element.Janus = nil
 	}
 
+	//if len(element.audioDeviceID) > 0 {
+	//	audioDrivers := driver.GetManager().Query(driver.FilterID(element.audioDeviceID))
+	//	for _, d := range audioDrivers {
+	//		if d.Status() != driver.StateOpened {
+	//			log.Println("Closing microphone...")
+	//			err := d.Close()
+	//			if err != nil {
+	//				log.Println("Close driver failed", err)
+	//			}
+	//		}
+	//	}
+	//}
+
 	if element.pc != nil {
 		err := element.pc.Close()
 		if err != nil {
 			log.Println("Close pc failed", err)
 		}
 		element.pc = nil
-	}
-
-	audioDrivers := driver.GetManager().Query(driver.FilterAudioRecorder())
-	for _, d := range audioDrivers {
-		err := d.Close()
-		if err != nil {
-			log.Println("Close driver failed", err)
-		}
 	}
 }

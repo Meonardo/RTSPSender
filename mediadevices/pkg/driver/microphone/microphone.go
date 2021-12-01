@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -56,9 +57,12 @@ func init() {
 			if info.IsDefault > 0 {
 				priority = driver.PriorityHigh
 			}
+			name := device.Name()
+			name = strings.Trim(name, "\x00")
+
 			driver.GetManager().Register(newMicrophone(info), driver.Info{
 				Label:      device.ID.String(),
-				Name:         device.Name(),
+				Name:         name,
 				Manufacturer: "",
 				ModelID:      "",
 				DeviceType: driver.Microphone,
