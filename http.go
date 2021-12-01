@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -137,6 +139,15 @@ func Start(c *gin.Context) {
 	}
 
 	mic := c.PostForm("mic")
+
+	out, err := exec.Command("gst-device-monitor-1.0", "Audio/Source").Output()
+	if err != nil {
+		log.Println("Read gst-device-monitor-1.0 cmd error:", err)
+	}
+	if !strings.Contains(string(out), mic) {
+		MakeResponse(false, -7, "Invalidate microphone device name!", c)
+		return
+	}
 
 	if tmp, ok := Config.Streams[id]; ok {
 		tmp.Room = room

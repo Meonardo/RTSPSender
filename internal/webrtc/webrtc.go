@@ -1,9 +1,8 @@
 package webrtc
 
 import (
+	gst "RTSPSender/internal/gstreamer-src"
 	"RTSPSender/internal/janus"
-	"RTSPSender/mediadevices"
-	"RTSPSender/mediadevices/pkg/prop"
 	"bytes"
 	"errors"
 	"fmt"
@@ -14,8 +13,6 @@ import (
 	"github.com/pion/interceptor"
 	"github.com/pion/webrtc/v3"
 
-	"RTSPSender/mediadevices/pkg/codec/opus"          // This is required to use opus audio encoder
-	_ "RTSPSender/mediadevices/pkg/driver/microphone" // This is required to register microphone adapter
 	"github.com/deepch/vdk/av"
 	"github.com/deepch/vdk/codec/h264parser"
 	"github.com/pion/webrtc/v3/pkg/media"
@@ -34,8 +31,7 @@ type Muxer struct {
 	status    webrtc.ICEConnectionState
 	stop      bool
 	pc        *webrtc.PeerConnection
-	audioCodecSelector *mediadevices.CodecSelector
-	audioDeviceID string
+	audioPipeline *gst.Pipeline
 
 	ClientACK *time.Timer
 	StreamACK *time.Timer
@@ -113,14 +109,6 @@ func (element *Muxer) NewPeerConnection(configuration webrtc.Configuration) (*we
 		log.Println("Set UDP ports to", element.Options.PortMin, "..", element.Options.PortMax)
 	}
 
-	opusParams, err := opus.NewParams()
-	if err != nil {
-		log.Printf("Create opus params failed %s", err)
-	}
-	audioCodecSelector := mediadevices.NewCodecSelector(mediadevices.WithAudioEncoders(&opusParams))
-	audioCodecSelector.Populate(m)
-	element.audioCodecSelector = audioCodecSelector
-
 	api := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(i), webrtc.WithSettingEngine(s))
 	return api.NewPeerConnection(configuration)
 }
@@ -145,50 +133,25 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 		}
 	}()
 
-	// Create an audio track
 	var hasAudio = len(mic) > 0 && mic != "mute"
-	var deviceID = ""
 	if hasAudio {
-		deviceInfo := mediadevices.EnumerateDevices()
-		if len(deviceInfo) > 0 {
-			for _, device := range deviceInfo {
-				if device.Kind == mediadevices.AudioInput && device.Name == mic {
-					hasAudio = true
-					deviceID = device.DeviceID
-					fmt.Printf("Found Audio Device: %s, name: %s", device, device.Name)
-					break
-				} else {
-					hasAudio = false
-				}
-			}
-		} else {
-			hasAudio = false
-		}
-	}
-
-	if hasAudio && element.audioCodecSelector != nil {
-		s, err := mediadevices.GetUserMedia(mediadevices.MediaStreamConstraints{
-			Audio: func(c *mediadevices.MediaTrackConstraints) {
-				c.DeviceID = prop.String(deviceID)
-			},
-			Codec: element.audioCodecSelector,
-		})
-
+		// Create an audio track
+		audioTrack, err := webrtc.NewTrackLocalStaticSample(
+			webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus},
+			"audio",
+			"microphone",
+		)
 		if err != nil {
 			return "Audio track create failed", err
 		}
-
-		element.audioDeviceID = deviceID
-		audioTrack := s.GetAudioTracks()[0].(*mediadevices.AudioTrack)
-		_, err = peerConnection.AddTransceiverFromTrack(audioTrack,
-			webrtc.RTPTransceiverInit{
-				Direction: webrtc.RTPTransceiverDirectionSendonly,
-			},
-		)
-
-		if err != nil {
+		if _, err = peerConnection.AddTrack(audioTrack); err != nil {
 			return "Add audio track failed", err
 		}
+
+		var audioPipelineDesc = fmt.Sprintf("autoaudiosrc device=\"%s\" ! queue ! audioconvert ! audioresample", mic)
+		audioPipeline := gst.CreatePipeline("opus", []*webrtc.TrackLocalStaticSample{audioTrack}, audioPipelineDesc)
+		audioPipeline.Start()
+		element.audioPipeline = audioPipeline
 	}
 
 	for i, i2 := range streams {
@@ -385,18 +348,9 @@ func (element *Muxer) Close() {
 		element.Janus = nil
 	}
 
-	//if len(element.audioDeviceID) > 0 {
-	//	audioDrivers := driver.GetManager().Query(driver.FilterID(element.audioDeviceID))
-	//	for _, d := range audioDrivers {
-	//		if d.Status() != driver.StateOpened {
-	//			log.Println("Closing microphone...")
-	//			err := d.Close()
-	//			if err != nil {
-	//				log.Println("Close driver failed", err)
-	//			}
-	//		}
-	//	}
-	//}
+	if element.audioPipeline != nil {
+		element.audioPipeline.Stop()
+	}
 
 	if element.pc != nil {
 		err := element.pc.Close()
