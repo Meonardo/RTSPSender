@@ -148,7 +148,7 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 			return "Add audio track failed", err
 		}
 
-		var audioPipelineDesc = fmt.Sprintf("autoaudiosrc device=\"%s\" ! queue ! audioconvert ! audioresample", mic)
+		var audioPipelineDesc = fmt.Sprintf("wasapisrc device=\"%s\" ! queue ! audioconvert ! audioresample", mic)
 		audioPipeline := gst.CreatePipeline("opus", []*webrtc.TrackLocalStaticSample{audioTrack}, audioPipelineDesc)
 		audioPipeline.Start()
 		element.audioPipeline = audioPipeline
