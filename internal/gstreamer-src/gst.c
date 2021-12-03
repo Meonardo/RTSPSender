@@ -52,6 +52,8 @@ GstFlowReturn gstreamer_send_new_sample_handler(GstElement *object, gpointer use
     if (buffer) {
       gst_buffer_extract_dup(buffer, 0, gst_buffer_get_size(buffer), &copy, &copy_size);
       goHandlePipelineBuffer(copy, copy_size, GST_BUFFER_DURATION(buffer), s->pipelineId);
+
+      g_free(copy);
     }
     gst_sample_unref (sample);
   }

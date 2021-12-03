@@ -350,6 +350,7 @@ func (element *Muxer) Close() {
 
 	if element.audioPipeline != nil {
 		element.audioPipeline.Stop()
+		element.audioPipeline = nil
 	}
 
 	if element.pc != nil {

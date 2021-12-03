@@ -121,5 +121,6 @@ func goHandlePipelineBuffer(buffer unsafe.Pointer, bufferLen C.int, duration C.i
 	} else {
 		fmt.Printf("discarding buffer, no pipeline with id %d", int(pipelineID))
 	}
-	C.free(buffer)
+	// Crash on Windows, g_free(buffer) in gst.c
+	//C.free(buffer)
 }
