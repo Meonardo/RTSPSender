@@ -31,7 +31,7 @@ func newRequest(method string) (map[string]interface{}, chan interface{}) {
 type Gateway struct {
 	// Sessions is a map of the currently active sessions to the gateway.
 	Sessions map[uint64]*Session
-	Closed bool
+	Closed   bool
 
 	// Access to the Sessions map should be synchronized with the Gateway.Lock()
 	// and Gateway.Unlock() methods provided by the embeded sync.Mutex.

@@ -95,16 +95,16 @@ func Configure(c *gin.Context) {
 		id := stream["id"].(string)
 		rtsp := stream["url"].(string)
 		if len(id) == 0 || len(rtsp) == 0 {
-			failedTimes ++
+			failedTimes++
 			continue
 		}
 		if _, ok := Config.Streams[id]; !ok {
 			Config.Streams[id] = StreamST{
-				ID: 	  id,
-				URL:      rtsp,
-				OnDemand: false,
+				ID:           id,
+				URL:          rtsp,
+				OnDemand:     false,
 				DisableAudio: true,
-				Cl:       make(map[string]viewer),
+				Cl:           make(map[string]viewer),
 			}
 		}
 	}
@@ -140,7 +140,7 @@ func Start(c *gin.Context) {
 
 	mic := c.PostForm("mic")
 
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" && len(mic) > 0 {
 		/// Recording mic only support Windows
 		out, err := exec.Command("gst-device-monitor-1.0", "Audio/Source").Output()
 		if err != nil {
@@ -233,8 +233,8 @@ func StreamWebRTC(uuid string) (string, error) {
 		AudioOnly = true
 	}
 	muxerWebRTC := webrtc.NewMuxer(webrtc.Options{
-		ICEServers: Config.GetICEServers(),
-		ICEUsername: Config.GetICEUsername(),
+		ICEServers:    Config.GetICEServers(),
+		ICEUsername:   Config.GetICEUsername(),
 		ICECredential: Config.GetICECredential(),
 	})
 
@@ -306,4 +306,3 @@ func CORSMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
-
