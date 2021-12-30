@@ -18,7 +18,7 @@ const port = ":9001"
 
 func serveHTTP() {
 	log.Printf("Staring HTTP server at port %s\n", port)
-	gin.SetMode(gin.DebugMode)
+	gin.SetMode(gin.ReleaseMode)
 
 	router := gin.Default()
 	router.Use(CORSMiddleware())
