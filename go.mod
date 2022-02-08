@@ -3,11 +3,11 @@ module RTSPSender
 go 1.17
 
 require (
-	github.com/deepch/vdk v0.0.0-20220125113923-e0fc50b09e56
+	github.com/deepch/vdk v0.0.0-20220127011006-13fad59f2c2f
 	github.com/gin-gonic/gin v1.7.7
 	github.com/gorilla/websocket v1.4.2
 	github.com/pion/interceptor v0.1.7
-	github.com/pion/webrtc/v3 v3.1.22
+	github.com/pion/webrtc/v3 v3.1.23
 	github.com/rs/xid v1.3.0
 )
 
@@ -15,7 +15,7 @@ require (
 	github.com/gin-contrib/sse v0.1.0 // indirect
 	github.com/go-playground/locales v0.14.0 // indirect
 	github.com/go-playground/universal-translator v0.18.0 // indirect
-	github.com/go-playground/validator/v10 v10.9.0 // indirect
+	github.com/go-playground/validator/v10 v10.10.0 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -41,7 +41,7 @@ require (
 	github.com/ugorji/go/codec v1.2.6 // indirect
 	golang.org/x/crypto v0.0.0-20220131195533-30dcbda58838 // indirect
 	golang.org/x/net v0.0.0-20220127200216-cd36cc0744dd // indirect
-	golang.org/x/sys v0.0.0-20211216021012-1d35b9e2eb4e // indirect
+	golang.org/x/sys v0.0.0-20220207234003-57398862261d // indirect
 	golang.org/x/text v0.3.7 // indirect
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 	google.golang.org/protobuf v1.27.1 // indirect

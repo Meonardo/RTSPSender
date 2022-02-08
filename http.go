@@ -2,9 +2,11 @@ package main
 
 import (
 	"RTSPSender/internal/webrtc"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os/exec"
@@ -12,6 +14,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/transform"
 )
 
 const port = ":9001"
@@ -147,7 +151,9 @@ func Start(c *gin.Context) {
 			log.Println("Read gst-device-monitor-1.0 cmd error:", err)
 		}
 
-		devices := GstDevicesFromCLI(string(out))
+		output, _ := GbkToUtf8(out)
+
+		devices := GstDevicesFromCLI(string(output))
 		micID := FindWASAPIMicGUID(mic, devices)
 
 		if len(micID) == 0 {
@@ -157,13 +163,8 @@ func Start(c *gin.Context) {
 		mic = micID
 	}
 
-	if tmp, ok := Config.Streams[id]; ok {
-		tmp.Room = room
-		tmp.Mic = mic
-		tmp.Pin = room
-		tmp.Display = display
-		Config.Streams[id] = tmp
-	} else {
+	ok := Config.AddStream(id, room, display, mic)
+	if !ok {
 		msg := fmt.Sprintf("Camera(%s) not config yet!", id)
 		MakeResponse(false, -5, msg, c)
 		return
@@ -204,7 +205,6 @@ func Stop(c *gin.Context) {
 	}
 
 	MakeResponse(false, -1, fmt.Sprintf("ID %s not found!", id), c)
-	return
 }
 
 func MakeResponse(success bool, code int, data string, c *gin.Context) {
@@ -305,4 +305,13 @@ func CORSMiddleware() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+func GbkToUtf8(s []byte) ([]byte, error) {
+	reader := transform.NewReader(bytes.NewReader(s), simplifiedchinese.GBK.NewDecoder())
+	d, e := ioutil.ReadAll(reader)
+	if e != nil {
+		return nil, e
+	}
+	return d, nil
 }

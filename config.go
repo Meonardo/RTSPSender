@@ -4,12 +4,13 @@ import (
 	"RTSPSender/internal/webrtc"
 	"crypto/rand"
 	"fmt"
-	"github.com/deepch/vdk/av"
-	"github.com/deepch/vdk/codec/h264parser"
-	"github.com/deepch/vdk/format/rtspv2"
 	"log"
 	"sync"
 	"time"
+
+	"github.com/deepch/vdk/av"
+	"github.com/deepch/vdk/codec/h264parser"
+	"github.com/deepch/vdk/format/rtspv2"
 )
 
 //Config global
@@ -25,7 +26,7 @@ type ConfigST struct {
 
 //ServerST struct
 type ServerST struct {
-	Janus		  string	`json:"janus"`
+	Janus         string   `json:"janus"`
 	HTTPPort      string   `json:"http_port"`
 	ICEServers    []string `json:"ice_servers"`
 	ICEUsername   string   `json:"ice_username"`
@@ -34,11 +35,11 @@ type ServerST struct {
 
 //StreamST struct
 type StreamST struct {
-	Room		 string   `json:"room"`
-	Pin 		 string   `json:"pin"`
-	ID			 string   `json:"id"`
-	Display		 string `json:"display"`
-	Mic 		 string `json:"mic"`
+	Room         string `json:"room"`
+	Pin          string `json:"pin"`
+	ID           string `json:"id"`
+	Display      string `json:"display"`
+	Mic          string `json:"mic"`
 	URL          string `json:"url"`
 	Status       bool   `json:"status"`
 	OnDemand     bool   `json:"on_demand"`
@@ -46,9 +47,9 @@ type StreamST struct {
 	Debug        bool   `json:"debug"`
 	RunLock      bool   `json:"-"`
 	Codecs       []av.CodecData
-	WebRTC 		 *webrtc.Muxer
+	WebRTC       *webrtc.Muxer
 	Cl           map[string]viewer
-	Client	     *rtspv2.RTSPClient
+	Client       *rtspv2.RTSPClient
 }
 
 type viewer struct {
@@ -76,6 +77,21 @@ func (element *ConfigST) RunUnlock(uuid string) {
 			element.Streams[uuid] = tmp
 		}
 	}
+}
+
+func (element *ConfigST) AddStream(id string, Room string, Display string, Mic string) bool {
+	element.mutex.Lock()
+	defer element.mutex.Unlock()
+
+	if tmp, ok := element.Streams[id]; ok {
+		tmp.Display = Display
+		tmp.Room = Room
+		tmp.Pin = Room
+		tmp.Mic = Mic
+		element.Streams[id] = tmp
+		return true
+	}
+	return false
 }
 
 func (element *ConfigST) HasViewer(uuid string) bool {
@@ -207,4 +223,3 @@ func pseudoUUID() (uuid string) {
 	uuid = fmt.Sprintf("%X-%X-%X-%X-%X", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 	return
 }
-

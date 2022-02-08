@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/pion/dtls/v2/pkg/protocol/extension"
 	"github.com/pion/interceptor"
 	"github.com/pion/webrtc/v3"
 
@@ -27,16 +28,16 @@ var (
 )
 
 type Muxer struct {
-	streams   map[int8]*Stream
-	status    webrtc.ICEConnectionState
-	stop      bool
-	pc        *webrtc.PeerConnection
+	streams       map[int8]*Stream
+	status        webrtc.ICEConnectionState
+	stop          bool
+	pc            *webrtc.PeerConnection
 	audioPipeline *gst.Pipeline
 
 	ClientACK *time.Timer
 	StreamACK *time.Timer
-	Options Options
-	Janus   *janus.Gateway
+	Options   Options
+	Janus     *janus.Gateway
 }
 
 type Stream struct {
@@ -101,6 +102,8 @@ func (element *Muxer) NewPeerConnection(configuration webrtc.Configuration) (*we
 		return nil, err
 	}
 	s := webrtc.SettingEngine{}
+	s.SetSRTPProtectionProfiles(extension.SRTP_AES128_CM_HMAC_SHA1_80)
+
 	if element.Options.PortMin > 0 && element.Options.PortMax > 0 && element.Options.PortMax > element.Options.PortMin {
 		err := s.SetEphemeralUDPPortRange(element.Options.PortMin, element.Options.PortMax)
 		if err != nil {
@@ -242,8 +245,8 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 		"ptype":   "publisher",
 		"room":    roomNum,
 		"id":      publisherID,
-		"display":	display,
-		"pin": pin,
+		"display": display,
+		"pin":     pin,
 	}, nil)
 	if err != nil {
 		return fmt.Sprintf("Join room %s failed", room), err
