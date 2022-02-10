@@ -64,13 +64,13 @@ func watchHandle(handle *janus.Handle) {
 		msg := <-handle.Events
 		switch msg := msg.(type) {
 		case *janus.SlowLinkMsg:
-			log.Println("SlowLinkMsg type ", handle.ID)
+			log.Println("SlowLinkMsg type, user:", handle.User)
 		case *janus.MediaMsg:
-			log.Println("MediaEvent type", msg.Type, " receiving ", msg.Receiving)
+			log.Println("MediaEvent type", msg.Type, "receiving", msg.Receiving, "user:", handle.User)
 		case *janus.WebRTCUpMsg:
-			log.Println("WebRTCUp type ", handle.ID)
+			log.Println("WebRTCUpMsg type, user:", handle.User)
 		case *janus.HangupMsg:
-			log.Println("HangupEvent type ", handle.ID)
+			log.Println("HangupEvent type", handle.User)
 		case *janus.EventMsg:
 			log.Printf("EventMsg %+v", msg.Plugindata.Data)
 		}
@@ -251,6 +251,7 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 	if err != nil {
 		return fmt.Sprintf("Join room %s failed", room), err
 	}
+	handle.User = fmt.Sprint(publisherID)
 
 	msg, err := handle.Message(map[string]interface{}{
 		"request": "publish",

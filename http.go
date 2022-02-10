@@ -212,6 +212,7 @@ func MakeResponse(success bool, code int, data string, c *gin.Context) {
 	if !success {
 		state = code
 	}
+	log.Printf("*[Response, Success: (%t), Code: (%d), Msg: (%s)]*\n", success, code, data)
 	c.JSON(http.StatusOK, gin.H{"state": state, "code": data})
 }
 
