@@ -135,6 +135,9 @@ func Start(c *gin.Context) {
 		MakeResponse(false, -5, "Please input camera ID", c)
 		return
 	}
+	if Config.ext(id) {
+		MakeResponse(true, 1, fmt.Sprintf("Camera ID %s is currently publishing!", id), c)
+	}
 
 	display := c.PostForm("display")
 	if len(display) == 0 {
@@ -145,7 +148,7 @@ func Start(c *gin.Context) {
 	mic := c.PostForm("mic")
 
 	if runtime.GOOS == "windows" && len(mic) > 0 {
-		/// Recording mic only support Windows
+		/// Recording mic only supports Windows
 		out, err := exec.Command("gst-device-monitor-1.0", "Audio/Source").Output()
 		if err != nil {
 			log.Println("Read gst-device-monitor-1.0 cmd error:", err)
@@ -163,8 +166,7 @@ func Start(c *gin.Context) {
 		mic = micID
 	}
 
-	ok := Config.AddStream(id, room, display, mic)
-	if !ok {
+	if !Config.UpdateStream(id, room, display, mic) {
 		msg := fmt.Sprintf("Camera(%s) not config yet!", id)
 		MakeResponse(false, -5, msg, c)
 		return
@@ -187,24 +189,23 @@ func Start(c *gin.Context) {
 
 func Stop(c *gin.Context) {
 	id := c.PostForm("id")
-
-	if stream, ok := Config.Streams[id]; ok {
-		// destroy webrtc client
-		if stream.WebRTC != nil {
-			log.Printf("Destroying (%s) WebRTC resource\n", stream.ID)
-			stream.WebRTC.Close()
-			stream.WebRTC = nil
-			Config.Streams[id] = stream
-		} else {
-			log.Printf("Destroy (%s) WebRTC resource failed: client does not exist! exec anyway\n", stream.ID)
-		}
-		//delete(Config.Streams, id)
-
-		MakeResponse(true, 1, fmt.Sprintf("Stop ID %s successfully!", id), c)
-		return
+	if !Config.ext(id) {
+		MakeResponse(true, 1, fmt.Sprintf("Camera ID %s not exist!", id), c)
 	}
 
-	MakeResponse(false, -1, fmt.Sprintf("ID %s not found!", id), c)
+	stream := Config.Streams[id]
+	// destroy webrtc client
+	if stream.WebRTC != nil {
+		log.Printf("Destroying (%s) WebRTC resource\n", stream.ID)
+		stream.WebRTC.Close()
+		stream.WebRTC = nil
+		Config.Streams[id] = stream
+	} else {
+		log.Printf("Destroy (%s) WebRTC resource failed: client does not exist! exec anyway\n", stream.ID)
+	}
+	//delete(Config.Streams, id)
+
+	MakeResponse(true, 1, fmt.Sprintf("Stop ID %s successfully!", id), c)
 }
 
 func MakeResponse(success bool, code int, data string, c *gin.Context) {

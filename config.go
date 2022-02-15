@@ -79,7 +79,7 @@ func (element *ConfigST) RunUnlock(uuid string) {
 	}
 }
 
-func (element *ConfigST) AddStream(id string, Room string, Display string, Mic string) bool {
+func (element *ConfigST) UpdateStream(id string, Room string, Display string, Mic string) bool {
 	element.mutex.Lock()
 	defer element.mutex.Unlock()
 
