@@ -245,8 +245,7 @@ func StreamWebRTC(uuid string) (string, error) {
 		return msg, err
 	}
 
-	stream.WebRTC = muxerWebRTC
-	Config.Streams[uuid] = stream
+	Config.AddRTC2Stream(uuid, muxerWebRTC)
 
 	go func() {
 		cid, ch := Config.clAd(uuid)

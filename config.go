@@ -94,6 +94,18 @@ func (element *ConfigST) UpdateStream(id string, Room string, Display string, Mi
 	return false
 }
 
+func (element *ConfigST) AddRTC2Stream(id string, WebRTC *webrtc.Muxer) bool {
+	element.mutex.Lock()
+	defer element.mutex.Unlock()
+
+	if tmp, ok := element.Streams[id]; ok {
+		tmp.WebRTC = WebRTC
+		element.Streams[id] = tmp
+		return true
+	}
+	return false
+}
+
 func (element *ConfigST) HasViewer(uuid string) bool {
 	element.mutex.Lock()
 	defer element.mutex.Unlock()
