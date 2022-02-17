@@ -41,8 +41,7 @@ func RTSPWorkerLoop(name, url string, OnDemand, DisableAudio, Debug bool) {
 
 func RTSPWorker(name, url string, OnDemand, DisableAudio, Debug bool) error {
 	keyTest := time.NewTimer(20 * time.Second)
-	clientTest := time.NewTimer(20 * time.Second)
-	//add next TimeOut
+
 	RTSPClient, err := rtspv2.Dial(rtspv2.RTSPClientOptions{URL: url, DisableAudio: DisableAudio, DialTimeout: 3 * time.Second, ReadWriteTimeout: 3 * time.Second, Debug: Debug})
 	if err != nil {
 		return err
@@ -51,21 +50,9 @@ func RTSPWorker(name, url string, OnDemand, DisableAudio, Debug bool) error {
 	if RTSPClient.CodecData != nil {
 		Config.coAd(name, RTSPClient.CodecData)
 	}
-	var AudioOnly bool
-	if len(RTSPClient.CodecData) == 1 && RTSPClient.CodecData[0].Type().IsAudio() {
-		AudioOnly = true
-	}
+
 	for {
 		select {
-		case <-clientTest.C:
-			if OnDemand {
-				if !Config.HasViewer(name) {
-					log.Println("no viewer at ", url)
-					return ErrorStreamExitNoViewer
-				} else {
-					clientTest.Reset(20 * time.Second)
-				}
-			}
 		case <-keyTest.C:
 			return ErrorStreamExitNoVideoOnStream
 		case signals := <-RTSPClient.Signals:
@@ -76,7 +63,7 @@ func RTSPWorker(name, url string, OnDemand, DisableAudio, Debug bool) error {
 				return ErrorStreamExitRtspDisconnect
 			}
 		case packetAV := <-RTSPClient.OutgoingPacketQueue:
-			if AudioOnly || packetAV.IsKeyFrame {
+			if packetAV.IsKeyFrame {
 				keyTest.Reset(20 * time.Second)
 			}
 			Config.cast(name, *packetAV)

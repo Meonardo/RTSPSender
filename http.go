@@ -136,7 +136,7 @@ func Start(c *gin.Context) {
 		return
 	}
 	if Config.ext(id) {
-		MakeResponse(true, 1, fmt.Sprintf("Camera ID %s is currently publishing!", id), c)
+		MakeResponse(false, -8, fmt.Sprintf("Camera ID %s is currently publishing!", id), c)
 	}
 
 	display := c.PostForm("display")
@@ -167,8 +167,7 @@ func Start(c *gin.Context) {
 	}
 
 	if !Config.UpdateStream(id, room, display, mic) {
-		msg := fmt.Sprintf("Camera(%s) not config yet!", id)
-		MakeResponse(false, -5, msg, c)
+		MakeResponse(false, -5, fmt.Sprintf("Camera(%s) not config yet!", id), c)
 		return
 	}
 
@@ -220,7 +219,7 @@ func MakeResponse(success bool, code int, data string, c *gin.Context) {
 //StreamWebRTC stream video over WebRTC
 func StreamWebRTC(uuid string) (string, error) {
 	if !Config.ext(uuid) {
-		return "", errors.New("stream Not Found")
+		return "", errors.New(fmt.Sprintf("Stream %s NOT found", uuid))
 	}
 
 	stream := Config.Streams[uuid]
@@ -228,11 +227,7 @@ func StreamWebRTC(uuid string) (string, error) {
 
 	codecs := Config.coGe(uuid)
 	if codecs == nil {
-		return "", errors.New("stream Codec Not Found")
-	}
-	var AudioOnly bool
-	if len(codecs) == 1 && codecs[0].Type().IsAudio() {
-		AudioOnly = true
+		return "", errors.New(fmt.Sprintf("Stream %s Codec NOT found", uuid))
 	}
 	muxerWebRTC := webrtc.NewMuxer(webrtc.Options{
 		ICEServers:    Config.GetICEServers(),
@@ -240,7 +235,13 @@ func StreamWebRTC(uuid string) (string, error) {
 		ICECredential: Config.GetICECredential(),
 	})
 
-	msg, err := muxerWebRTC.WriteHeader(codecs, Config.Server.Janus, stream.Room, stream.ID, stream.Display, stream.Mic, stream.Pin)
+	msg, err := muxerWebRTC.WriteHeader(codecs,
+		Config.Server.Janus,
+		stream.Room,
+		stream.ID,
+		stream.Display,
+		stream.Mic,
+		stream.Pin)
 	if err != nil {
 		return msg, err
 	}
@@ -259,19 +260,19 @@ func StreamWebRTC(uuid string) (string, error) {
 		for {
 			select {
 			case <-noVideo.C:
-				log.Println("noVideo")
+				log.Printf("Stream %s no video...", uuid)
 				return
 			case pck := <-ch:
-				if pck.IsKeyFrame || AudioOnly {
+				if pck.IsKeyFrame {
 					noVideo.Reset(10 * time.Second)
 					videoStart = true
 				}
-				if !videoStart && !AudioOnly {
+				if !videoStart {
 					continue
 				}
 				err = muxerWebRTC.WritePacket(pck)
 				if err != nil {
-					log.Println("WritePacket", err)
+					log.Printf("Stream %s writePacket error: %s", uuid, err)
 					return
 				}
 			}

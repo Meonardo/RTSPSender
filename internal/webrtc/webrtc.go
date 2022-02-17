@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/deepch/vdk/codec/h264parser"
 	"log"
 	"strconv"
 	"time"
@@ -15,7 +16,6 @@ import (
 	"github.com/pion/webrtc/v3"
 
 	"github.com/deepch/vdk/av"
-	"github.com/deepch/vdk/codec/h264parser"
 	"github.com/pion/webrtc/v3/pkg/media"
 )
 
@@ -24,7 +24,6 @@ var (
 	ErrorCodecNotSupported = errors.New("WebRTC Codec Not Supported")
 	ErrorClientOffline     = errors.New("WebRTC Client Offline")
 	ErrorNotTrackAvailable = errors.New("WebRTC Not Track Available")
-	ErrorIgnoreAudioTrack  = errors.New("WebRTC Ignore Audio Track codec not supported WebRTC support only PCM_ALAW or PCM_MULAW")
 )
 
 type Muxer struct {
@@ -285,6 +284,7 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 
 func (element *Muxer) WritePacket(pkt av.Packet) (err error) {
 	//log.Println("WritePacket", pkt.Time, element.stop, webrtc.ICEConnectionStateConnected, pkt.Idx, element.streams[pkt.Idx])
+
 	var WritePacketSuccess bool
 	defer func() {
 		if !WritePacketSuccess {
@@ -306,26 +306,17 @@ func (element *Muxer) WritePacket(pkt av.Packet) (err error) {
 		if len(pkt.Data) < 5 {
 			return nil
 		}
-		switch tmp.codec.Type() {
-		case av.H264:
+		if tmp.codec.Type() == av.H264  {
 			codec := tmp.codec.(h264parser.CodecData)
 			if pkt.IsKeyFrame {
 				pkt.Data = append([]byte{0, 0, 0, 1}, bytes.Join([][]byte{codec.SPS(), codec.PPS(), pkt.Data[4:]}, []byte{0, 0, 0, 1})...)
 			} else {
 				pkt.Data = pkt.Data[4:]
 			}
-		case av.PCM_ALAW:
-		case av.OPUS:
-		case av.PCM_MULAW:
-		case av.AAC:
-			//TODO: NEED ADD DECODER AND ENCODER
-			return ErrorCodecNotSupported
-		case av.PCM:
-			//TODO: NEED ADD ENCODER
-			return ErrorCodecNotSupported
-		default:
+		} else {
 			return ErrorCodecNotSupported
 		}
+
 		err = tmp.track.WriteSample(media.Sample{Data: pkt.Data, Duration: pkt.Duration})
 		if err == nil {
 			WritePacketSuccess = true
