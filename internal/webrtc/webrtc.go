@@ -3,7 +3,6 @@ package webrtc
 import (
 	gst "RTSPSender/internal/gstreamer-src"
 	"RTSPSender/internal/janus"
-	"bytes"
 	"errors"
 	"fmt"
 	"github.com/deepch/vdk/codec/h264parser"
@@ -308,15 +307,18 @@ func (element *Muxer) WritePacket(pkt av.Packet) (err error) {
 		}
 		if tmp.codec.Type() == av.H264  {
 			codec := tmp.codec.(h264parser.CodecData)
+			pkt.Data = pkt.Data[4:]
+
 			if pkt.IsKeyFrame {
-				pkt.Data = append([]byte{0, 0, 0, 1}, bytes.Join([][]byte{codec.SPS(), codec.PPS(), pkt.Data[4:]}, []byte{0, 0, 0, 1})...)
-			} else {
-				pkt.Data = pkt.Data[4:]
+				pkt.Data = append([]byte{0, 0, 0, 1}, pkt.Data...)
+				pkt.Data = append(codec.SPS(), pkt.Data...)
+				pkt.Data = append([]byte{0, 0, 0, 1}, pkt.Data...)
+				pkt.Data = append(codec.PPS(), pkt.Data...)
+				pkt.Data = append([]byte{0, 0, 0, 1}, pkt.Data...)
 			}
 		} else {
 			return ErrorCodecNotSupported
 		}
-
 		err = tmp.track.WriteSample(media.Sample{Data: pkt.Data, Duration: pkt.Duration})
 		if err == nil {
 			WritePacketSuccess = true
