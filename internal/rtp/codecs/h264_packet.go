@@ -1,8 +1,10 @@
 package codecs
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
+	"math"
 )
 
 // H264Payloader payloads H264 packets
@@ -19,6 +21,7 @@ const (
 	audNALUType    = 9
 	fillerNALUType = 12
 
+	nalHeaderSize 		= 1
 	fuaHeaderSize       = 2
 	stapaHeaderSize     = 1
 	stapaNALULengthSize = 2
@@ -67,6 +70,123 @@ func emitNalus(nals []byte, emit func([]byte)) {
 		}
 	}
 }
+
+func packetizeFuA(mtu uint16, payload []byte) [][]byte {
+	availableSize := int(mtu) - fuaHeaderSize
+	payloadSize := len(payload) - nalHeaderSize
+	numPackets := int(math.Ceil(float64(payloadSize / availableSize)))
+	numLargerPackets := payloadSize % numPackets
+	packageSize := int(math.Floor(float64(payloadSize / numPackets)))
+
+	fNRI := payload[0] & (fuStartBitmask | naluRefIdcBitmask)
+	nal := payload[0] & naluTypeBitmask
+	fuIndicator := fNRI | fuaNALUType
+
+	fuHeaderEnd := []byte{fuIndicator, nal | fuEndBitmask}
+	fuHeaderMiddle := []byte{fuIndicator, nal}
+	fuHeaderStart := []byte{fuIndicator, nal | fuStartBitmask}
+	fuHeader := fuHeaderStart
+
+	var packages [][]byte
+	var offset = stapaHeaderSize
+
+	for offset < len(payload) {
+		var data []byte
+		if numLargerPackets > 0 {
+			numLargerPackets -= 1
+			data = payload[offset : (packageSize + 1)]
+			offset += packageSize + 1
+		} else {
+			data = payload[offset : packageSize]
+			offset += packageSize
+		}
+
+		if offset == len(payload) {
+			fuHeader = fuHeaderEnd
+		}
+
+		t := append(fuHeader, data...)
+		bytes.Join(packages, t)
+
+		fuHeader = fuHeaderMiddle
+	}
+
+	return packages
+}
+
+func packetizeStapA(mtu uint16, data []byte, packages [][]byte) (byte, byte) {
+	counter := 0
+	availableSize := int(mtu) - (nalHeaderSize + stapaNALULengthSize)
+
+	stapHeader := stapaNALUType | (data[0] & 0xE0)
+
+	payload := []byte{0}
+
+	nalu := data
+
+	for len(nalu) <= availableSize && counter < 9 {
+
+		stapHeader |= nalu[0] & fuStartBitmask
+
+		nri := nalu[0] & naluRefIdcBitmask
+
+		if stapHeader & naluRefIdcBitmask < nri {
+			stapHeader = stapHeader & 0x9F | nri
+		}
+		availableSize -= stapaNALULengthSize + len(nalu)
+		counter += 1
+		// 两个字节
+		payload = append(payload, byte(len(nalu)))
+		payload = append(payload, nalu...)
+	}
+
+	for nalu = range packages {
+
+	}
+}
+
+func splitBitstream(buf []byte) [][]byte {
+	var data [][]byte
+	i := 0
+	flag := (buf[i] != 0 || buf[i + 1] != 0 || buf[i + 2] != 0x01) &&
+		(buf[i] != 0 || buf[i + 1] != 0 || buf[i + 2] != 0 || buf[i + 3] != 0x01)
+	for flag {
+		i += 1
+		if i + 4 >= len(buf) {
+			return data
+		}
+	}
+
+	if buf[i] != 0 || buf[i + 1] != 0 || buf[i + 2] != 0x01 {
+		i += 1
+	}
+	i += 3
+	nalStart := i
+	nalEnd := 0
+	bufType := byte(0)
+	flag = (buf[i] != 0 || buf[i + 1] != 0 || buf[i + 2] != 0) &&
+		(buf[i] != 0 || buf[i + 1] != 0 || buf[i + 2] != 0x01)
+
+	for flag {
+		i += 1
+		if i + 3 >= len(buf) {
+			nalEnd = len(buf)
+			bufType = buf[nalStart] & 0x1F
+			if bufType != 0x06 {
+				bytes.Join(data, buf[nalStart:nalEnd])
+			}
+		}
+	}
+
+	nalEnd = i
+	bufType = buf[nalStart] & 0x1F
+	if bufType != 0x06 {
+		bytes.Join(data, buf[nalStart:nalEnd])
+	}
+
+	return data
+}
+
 
 // Payload fragments a H264 packet across one or more byte arrays
 func (p *H264Payloader) Payload(mtu uint16, payload []byte) [][]byte {
