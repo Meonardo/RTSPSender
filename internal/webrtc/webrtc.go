@@ -5,7 +5,6 @@ import (
 	"RTSPSender/internal/janus"
 	"errors"
 	"fmt"
-	"github.com/deepch/vdk/codec/h264parser"
 	"log"
 	"strconv"
 	"time"
@@ -305,20 +304,20 @@ func (element *Muxer) WritePacket(pkt av.Packet) (err error) {
 		if len(pkt.Data) < 5 {
 			return nil
 		}
-		if tmp.codec.Type() == av.H264  {
-			codec := tmp.codec.(h264parser.CodecData)
-			pkt.Data = pkt.Data[4:]
-
-			if pkt.IsKeyFrame {
-				pkt.Data = append([]byte{0, 0, 0, 1}, pkt.Data...)
-				pkt.Data = append(codec.SPS(), pkt.Data...)
-				pkt.Data = append([]byte{0, 0, 0, 1}, pkt.Data...)
-				pkt.Data = append(codec.PPS(), pkt.Data...)
-				pkt.Data = append([]byte{0, 0, 0, 1}, pkt.Data...)
-			}
-		} else {
-			return ErrorCodecNotSupported
-		}
+		//if tmp.codec.Type() == av.H264  {
+		//	codec := tmp.codec.(h264parser.CodecData)
+		//	pkt.Data = pkt.Data[4:]
+		//
+		//	if pkt.IsKeyFrame {
+		//		pkt.Data = append([]byte{0, 0, 0, 1}, pkt.Data...)
+		//		pkt.Data = append(codec.SPS(), pkt.Data...)
+		//		pkt.Data = append([]byte{0, 0, 0, 1}, pkt.Data...)
+		//		pkt.Data = append(codec.PPS(), pkt.Data...)
+		//		pkt.Data = append([]byte{0, 0, 0, 1}, pkt.Data...)
+		//	}
+		//} else {
+		//	return ErrorCodecNotSupported
+		//}
 		err = tmp.track.WriteSample(media.Sample{Data: pkt.Data, Duration: pkt.Duration})
 		if err == nil {
 			WritePacketSuccess = true

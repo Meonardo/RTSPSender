@@ -114,7 +114,7 @@ func packetizeFuA(mtu uint16, payload []byte) [][]byte {
 	return packages
 }
 
-func packetizeStapA(mtu uint16, data []byte, packages [][]byte) (byte, byte) {
+func packetizeStapA(mtu uint16, data []byte, packages [][]byte) []byte {
 	counter := 0
 	availableSize := int(mtu) - (nalHeaderSize + stapaNALULengthSize)
 
@@ -124,10 +124,9 @@ func packetizeStapA(mtu uint16, data []byte, packages [][]byte) (byte, byte) {
 
 	nalu := data
 
-	for len(nalu) <= availableSize && counter < 9 {
-
+	i := -1
+	for len(nalu) <= availableSize && counter < 9 && i < len(packages) {
 		stapHeader |= nalu[0] & fuStartBitmask
-
 		nri := nalu[0] & naluRefIdcBitmask
 
 		if stapHeader & naluRefIdcBitmask < nri {
@@ -136,24 +135,29 @@ func packetizeStapA(mtu uint16, data []byte, packages [][]byte) (byte, byte) {
 		availableSize -= stapaNALULengthSize + len(nalu)
 		counter += 1
 		// 两个字节
-		payload = append(payload, byte(len(nalu)))
+		payload = append(payload, byte(uint16(len(nalu))))
 		payload = append(payload, nalu...)
+
+		i += 1
+		nalu = packages[i]
 	}
 
-	for nalu = range packages {
-
+	if counter <= 1 {
+		return data
 	}
+
+	return append([]byte{stapHeader}, payload...)
 }
 
 func splitBitstream(buf []byte) [][]byte {
 	var data [][]byte
 	i := 0
-	flag := (buf[i] != 0 || buf[i + 1] != 0 || buf[i + 2] != 0x01) &&
-		(buf[i] != 0 || buf[i + 1] != 0 || buf[i + 2] != 0 || buf[i + 3] != 0x01)
-	for flag {
+
+	for (buf[i] != 0 || buf[i + 1] != 0 || buf[i + 2] != 0x01) &&
+		(buf[i] != 0 || buf[i + 1] != 0 || buf[i + 2] != 0 || buf[i + 3] != 0x01) {
 		i += 1
 		if i + 4 >= len(buf) {
-			return data
+			break
 		}
 	}
 
@@ -164,10 +168,9 @@ func splitBitstream(buf []byte) [][]byte {
 	nalStart := i
 	nalEnd := 0
 	bufType := byte(0)
-	flag = (buf[i] != 0 || buf[i + 1] != 0 || buf[i + 2] != 0) &&
-		(buf[i] != 0 || buf[i + 1] != 0 || buf[i + 2] != 0x01)
 
-	for flag {
+	for (buf[i] != 0 || buf[i + 1] != 0 || buf[i + 2] != 0) &&
+		(buf[i] != 0 || buf[i + 1] != 0 || buf[i + 2] != 0x01) {
 		i += 1
 		if i + 3 >= len(buf) {
 			nalEnd = len(buf)
@@ -187,9 +190,28 @@ func splitBitstream(buf []byte) [][]byte {
 	return data
 }
 
-
-// Payload fragments a H264 packet across one or more byte arrays
 func (p *H264Payloader) Payload(mtu uint16, payload []byte) [][]byte {
+	var payloads [][]byte
+	if len(payload) == 0 {
+		return payloads
+	}
+	println("payload len: ", len(payload))
+
+	packages := splitBitstream(payload)
+
+	for _, p := range packages {
+		if len(p) > int(mtu) {
+			payloads = append(payloads, packetizeFuA(mtu, p)...)
+		} else {
+			payloads = append(payloads, packetizeStapA(mtu, p, packages))
+		}
+	}
+
+	return payloads
+}
+
+// Payload1 fragments a H264 packet across one or more byte arrays
+func (p *H264Payloader) Payload1(mtu uint16, payload []byte) [][]byte {
 	var payloads [][]byte
 	if len(payload) == 0 {
 		return payloads
