@@ -1,7 +1,6 @@
 package codecs
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -36,7 +35,52 @@ const (
 
 func annexbNALUStartCode() []byte { return []byte{0x00, 0x00, 0x00, 0x01} }
 
+func packetizeFuA(mtu int, payload []byte) [][]byte {
+	availableSize := mtu - fuaHeaderSize
+	payloadSize := len(payload) - nalHeaderSize
+	numPackets := int(math.Ceil(float64(payloadSize) / float64(availableSize)))
+	numLargerPackets := payloadSize % numPackets
+	packageSize := int(math.Floor(float64(payloadSize) / float64(numPackets)))
+
+	fNRI := payload[0] & (0x80 | 0x60)
+	nal := payload[0] & naluTypeBitmask
+
+	fuIndicator := fNRI | fuaNALUType
+
+	fuHeaderEnd := []byte{fuIndicator, nal | fuEndBitmask}
+	fuHeaderMiddle := []byte{fuIndicator, nal}
+	fuHeaderStart := []byte{fuIndicator, nal | fuStartBitmask}
+	fuHeader := fuHeaderStart
+
+	var packages [][]byte
+	var offset = nalHeaderSize
+
+	for offset < len(payload) {
+		var data []byte
+		if numLargerPackets > 0 {
+			numLargerPackets -= 1
+			data = payload[offset : (offset + packageSize + 1)]
+			offset += packageSize + 1
+		} else {
+			data = payload[offset : (offset + packageSize)]
+			offset += packageSize
+		}
+
+		if offset == len(payload) {
+			fuHeader = fuHeaderEnd
+		}
+
+		t := append(fuHeader, data...)
+		packages = append(packages, t)
+
+		fuHeader = fuHeaderMiddle
+	}
+
+	return packages
+}
+
 func emitNalus(nals []byte, emit func([]byte)) {
+	// query start code
 	nextInd := func(nalu []byte, start int) (indStart int, indLen int) {
 		zeroCount := 0
 
@@ -71,259 +115,71 @@ func emitNalus(nals []byte, emit func([]byte)) {
 	}
 }
 
-func packetizeFuA(mtu uint16, payload []byte) [][]byte {
-	availableSize := int(mtu) - fuaHeaderSize
-	payloadSize := len(payload) - nalHeaderSize
-	numPackets := int(math.Ceil(float64(payloadSize / availableSize)))
-	numLargerPackets := payloadSize % numPackets
-	packageSize := int(math.Floor(float64(payloadSize / numPackets)))
-
-	fNRI := payload[0] & (fuStartBitmask | naluRefIdcBitmask)
-	nal := payload[0] & naluTypeBitmask
-	fuIndicator := fNRI | fuaNALUType
-
-	fuHeaderEnd := []byte{fuIndicator, nal | fuEndBitmask}
-	fuHeaderMiddle := []byte{fuIndicator, nal}
-	fuHeaderStart := []byte{fuIndicator, nal | fuStartBitmask}
-	fuHeader := fuHeaderStart
-
-	var packages [][]byte
-	var offset = stapaHeaderSize
-
-	for offset < len(payload) {
-		var data []byte
-		if numLargerPackets > 0 {
-			numLargerPackets -= 1
-			data = payload[offset : (packageSize + 1)]
-			offset += packageSize + 1
-		} else {
-			data = payload[offset : packageSize]
-			offset += packageSize
-		}
-
-		if offset == len(payload) {
-			fuHeader = fuHeaderEnd
-		}
-
-		t := append(fuHeader, data...)
-		bytes.Join(packages, t)
-
-		fuHeader = fuHeaderMiddle
-	}
-
-	return packages
-}
-
-func packetizeStapA(mtu uint16, data []byte, packages [][]byte) []byte {
-	counter := 0
-	availableSize := int(mtu) - (nalHeaderSize + stapaNALULengthSize)
-
-	stapHeader := stapaNALUType | (data[0] & 0xE0)
-
-	payload := []byte{0}
-
-	nalu := data
-
-	i := -1
-	for len(nalu) <= availableSize && counter < 9 && i < len(packages) {
-		stapHeader |= nalu[0] & fuStartBitmask
-		nri := nalu[0] & naluRefIdcBitmask
-
-		if stapHeader & naluRefIdcBitmask < nri {
-			stapHeader = stapHeader & 0x9F | nri
-		}
-		availableSize -= stapaNALULengthSize + len(nalu)
-		counter += 1
-		// 两个字节
-		payload = append(payload, byte(uint16(len(nalu))))
-		payload = append(payload, nalu...)
-
-		i += 1
-		nalu = packages[i]
-	}
-
-	if counter <= 1 {
-		return data
-	}
-
-	return append([]byte{stapHeader}, payload...)
-}
-
-func splitBitstream(buf []byte) [][]byte {
-	var data [][]byte
-	i := 0
-
-	for (buf[i] != 0 || buf[i + 1] != 0 || buf[i + 2] != 0x01) &&
-		(buf[i] != 0 || buf[i + 1] != 0 || buf[i + 2] != 0 || buf[i + 3] != 0x01) {
-		i += 1
-		if i + 4 >= len(buf) {
-			break
-		}
-	}
-
-	if buf[i] != 0 || buf[i + 1] != 0 || buf[i + 2] != 0x01 {
-		i += 1
-	}
-	i += 3
-	nalStart := i
-	nalEnd := 0
-	bufType := byte(0)
-
-	for (buf[i] != 0 || buf[i + 1] != 0 || buf[i + 2] != 0) &&
-		(buf[i] != 0 || buf[i + 1] != 0 || buf[i + 2] != 0x01) {
-		i += 1
-		if i + 3 >= len(buf) {
-			nalEnd = len(buf)
-			bufType = buf[nalStart] & 0x1F
-			if bufType != 0x06 {
-				bytes.Join(data, buf[nalStart:nalEnd])
-			}
-		}
-	}
-
-	nalEnd = i
-	bufType = buf[nalStart] & 0x1F
-	if bufType != 0x06 {
-		bytes.Join(data, buf[nalStart:nalEnd])
-	}
-
-	return data
-}
-
+// Payload fragments a H264 packet across one or more byte arrays
 func (p *H264Payloader) Payload(mtu uint16, payload []byte) [][]byte {
+	max := int(mtu) + 12
+
 	var payloads [][]byte
 	if len(payload) == 0 {
 		return payloads
 	}
-	println("payload len: ", len(payload))
+	//println("payload len: ", len(payload))
 
-	packages := splitBitstream(payload)
-
-	for _, p := range packages {
-		if len(p) > int(mtu) {
-			payloads = append(payloads, packetizeFuA(mtu, p)...)
-		} else {
-			payloads = append(payloads, packetizeStapA(mtu, p, packages))
-		}
-	}
-
-	return payloads
-}
-
-// Payload1 fragments a H264 packet across one or more byte arrays
-func (p *H264Payloader) Payload1(mtu uint16, payload []byte) [][]byte {
-	var payloads [][]byte
-	if len(payload) == 0 {
-		return payloads
-	}
+	counter := 0
+	availableSize := max - (nalHeaderSize + stapaNALULengthSize)
+	var stapAPayload []byte
+	var stapHeader byte
+	var shouldAppendSTAPA = false
 
 	emitNalus(payload, func(nalu []byte) {
 		if len(nalu) == 0 {
 			return
 		}
 
-		naluType := nalu[0] & naluTypeBitmask
-		naluRefIdc := nalu[0] & naluRefIdcBitmask
-
-		switch {
-		case naluType == audNALUType || naluType == fillerNALUType:
-			return
-		case naluType == spsNALUType:
-			p.spsNalu = nalu
-			return
-		case naluType == ppsNALUType:
-			p.ppsNalu = nalu
-			return
-		case p.spsNalu != nil && p.ppsNalu != nil:
-			// Pack current NALU with SPS and PPS as STAP-A
-			spsLen := make([]byte, 2)
-			binary.BigEndian.PutUint16(spsLen, uint16(len(p.spsNalu)))
-
-			ppsLen := make([]byte, 2)
-			binary.BigEndian.PutUint16(ppsLen, uint16(len(p.ppsNalu)))
-
-			stapANalu := []byte{outputStapAHeader}
-			stapANalu = append(stapANalu, spsLen...)
-			stapANalu = append(stapANalu, p.spsNalu...)
-			stapANalu = append(stapANalu, ppsLen...)
-			stapANalu = append(stapANalu, p.ppsNalu...)
-			if len(stapANalu) <= int(mtu) {
-				out := make([]byte, len(stapANalu))
-				copy(out, stapANalu)
-				payloads = append(payloads, out)
+		if len(nalu) > max {
+			if shouldAppendSTAPA {
+				if counter <= 1 {
+					payloads = append(payloads, nalu)
+				} else {
+					stapAPayload = append([]byte{stapHeader}, stapAPayload...)
+					payloads = append(payloads, stapAPayload)
+				}
 			}
 
-			p.spsNalu = nil
-			p.ppsNalu = nil
-		}
+			shouldAppendSTAPA = false
 
-		// Single NALU
-		if len(nalu) <= int(mtu) {
-			out := make([]byte, len(nalu))
-			copy(out, nalu)
-			payloads = append(payloads, out)
-			return
-		}
-
-		// FU-A
-		maxFragmentSize := int(mtu) - fuaHeaderSize
-
-		// The FU payload consists of fragments of the payload of the fragmented
-		// NAL unit so that if the fragmentation unit payloads of consecutive
-		// FUs are sequentially concatenated, the payload of the fragmented NAL
-		// unit can be reconstructed.  The NAL unit type octet of the fragmented
-		// NAL unit is not included as such in the fragmentation unit payload,
-		// 	but rather the information of the NAL unit type octet of the
-		// fragmented NAL unit is conveyed in the F and NRI fields of the FU
-		// indicator octet of the fragmentation unit and in the type field of
-		// the FU header.  An FU payload MAY have any number of octets and MAY
-		// be empty.
-
-		naluData := nalu
-		// According to the RFC, the first octet is skipped due to redundant information
-		naluDataIndex := 1
-		naluDataLength := len(nalu) - naluDataIndex
-		naluDataRemaining := naluDataLength
-
-		if min(maxFragmentSize, naluDataRemaining) <= 0 {
-			return
-		}
-
-		for naluDataRemaining > 0 {
-			currentFragmentSize := min(maxFragmentSize, naluDataRemaining)
-			out := make([]byte, fuaHeaderSize+currentFragmentSize)
-
-			// +---------------+
-			// |0|1|2|3|4|5|6|7|
-			// +-+-+-+-+-+-+-+-+
-			// |F|NRI|  Type   |
-			// +---------------+
-			out[0] = fuaNALUType
-			out[0] |= naluRefIdc
-
-			// +---------------+
-			// |0|1|2|3|4|5|6|7|
-			// +-+-+-+-+-+-+-+-+
-			// |S|E|R|  Type   |
-			// +---------------+
-
-			out[1] = naluType
-			if naluDataRemaining == naluDataLength {
-				// Set start bit
-				out[1] |= 1 << 7
-			} else if naluDataRemaining-currentFragmentSize == 0 {
-				// Set end bit
-				out[1] |= 1 << 6
+			fuaPacket := packetizeFuA(max, nalu)
+			payloads = append(payloads, fuaPacket...)
+		} else {
+			if stapHeader == 0 {
+				stapHeader = stapaNALUType | (nalu[0] & 0xE0)
 			}
 
-			copy(out[fuaHeaderSize:], naluData[naluDataIndex:naluDataIndex+currentFragmentSize])
-			payloads = append(payloads, out)
+			if len(nalu) <= availableSize && counter < 9 {
+				stapHeader |= nalu[0] & 0x80
+				nri := nalu[0] & 0x60
 
-			naluDataRemaining -= currentFragmentSize
-			naluDataIndex += currentFragmentSize
+				if stapHeader & 0x60 < nri {
+					stapHeader = stapHeader & 0x9F | nri
+				}
+				availableSize -= stapaNALULengthSize + len(nalu)
+				counter += 1
+
+				naluWithLen := make([]byte, 2)
+				binary.BigEndian.PutUint16(naluWithLen, uint16(len(nalu)))
+				naluWithLen = append(naluWithLen, nalu...)
+
+				stapAPayload = append(naluWithLen, stapAPayload...)
+
+				shouldAppendSTAPA = true
+				return
+			}
 		}
 	})
 
+	//for i, t := range payloads {
+	//	fmt.Printf("Packet index: %d len: %d\n", i, len(t))
+	//}
 	return payloads
 }
 
