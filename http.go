@@ -6,16 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gin-gonic/gin"
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/transform"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os/exec"
 	"runtime"
-	"time"
-
-	"github.com/gin-gonic/gin"
-	"golang.org/x/text/encoding/simplifiedchinese"
-	"golang.org/x/text/transform"
 )
 
 const port = ":9001"
@@ -118,7 +116,7 @@ func Configure(c *gin.Context) {
 	}
 
 	// 预先启动 RTSP worker
-	go serveStreams()
+	//go serveStreams()
 
 	MakeResponse(true, 1, fmt.Sprintf("Configure {%s} successfully!", configs), c)
 }
@@ -223,19 +221,19 @@ func StreamWebRTC(uuid string) (string, error) {
 	}
 
 	stream := Config.Streams[uuid]
-	Config.RunIFNotRun(uuid)
+	//Config.RunIFNotRun(uuid)
 
-	codecs := Config.coGe(uuid)
-	if codecs == nil {
-		return "", errors.New(fmt.Sprintf("Stream %s Codec NOT found", uuid))
-	}
+	//codecs := Config.coGe(uuid)
+	//if codecs == nil {
+	//	return "", errors.New(fmt.Sprintf("Stream %s Codec NOT found", uuid))
+	//}
 	muxerWebRTC := webrtc.NewMuxer(webrtc.Options{
 		ICEServers:    Config.GetICEServers(),
 		ICEUsername:   Config.GetICEUsername(),
 		ICECredential: Config.GetICECredential(),
 	})
 
-	msg, err := muxerWebRTC.WriteHeader(codecs,
+	msg, err := muxerWebRTC.WriteHeader(stream.URL,
 		Config.Server.Janus,
 		stream.Room,
 		stream.ID,
@@ -248,36 +246,36 @@ func StreamWebRTC(uuid string) (string, error) {
 
 	Config.AddRTC2Stream(uuid, muxerWebRTC)
 
-	go func() {
-		cid, ch := Config.clAd(uuid)
-
-		//defer reconnect(uuid)
-		defer Config.clDe(uuid, cid)
-		defer muxerWebRTC.Close()
-
-		var videoStart bool
-		noVideo := time.NewTimer(10 * time.Second)
-		for {
-			select {
-			case <-noVideo.C:
-				log.Printf("Stream %s no video...", uuid)
-				return
-			case pck := <-ch:
-				if pck.IsKeyFrame {
-					noVideo.Reset(10 * time.Second)
-					videoStart = true
-				}
-				if !videoStart {
-					continue
-				}
-				err = muxerWebRTC.WritePacket(pck)
-				if err != nil {
-					log.Printf("Stream %s writePacket error: %s", uuid, err)
-					return
-				}
-			}
-		}
-	}()
+	//go func() {
+	//	cid, ch := Config.clAd(uuid)
+	//
+	//	//defer reconnect(uuid)
+	//	defer Config.clDe(uuid, cid)
+	//	defer muxerWebRTC.Close()
+	//
+	//	var videoStart bool
+	//	noVideo := time.NewTimer(10 * time.Second)
+	//	for {
+	//		select {
+	//		case <-noVideo.C:
+	//			log.Printf("Stream %s no video...", uuid)
+	//			return
+	//		case pck := <-ch:
+	//			if pck.IsKeyFrame {
+	//				noVideo.Reset(10 * time.Second)
+	//				videoStart = true
+	//			}
+	//			if !videoStart {
+	//				continue
+	//			}
+	//			err = muxerWebRTC.WritePacket(pck)
+	//			if err != nil {
+	//				log.Printf("Stream %s writePacket error: %s", uuid, err)
+	//				return
+	//			}
+	//		}
+	//	}
+	//}()
 
 	return "", nil
 }

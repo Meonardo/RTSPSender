@@ -3,6 +3,7 @@ module RTSPSender
 go 1.17
 
 require (
+	github.com/aler9/gortsplib v0.0.0-20220303160144-a541ae8f963c
 	github.com/deepch/vdk v0.0.0-20220208123008-6ba34dc2bf0c
 	github.com/gin-gonic/gin v1.7.7
 	github.com/gorilla/websocket v1.4.2
@@ -10,6 +11,8 @@ require (
 	github.com/pion/webrtc/v3 v3.1.23
 	github.com/rs/xid v1.3.0
 )
+
+require github.com/icza/bitio v1.0.0 // indirect
 
 require (
 	github.com/gin-contrib/sse v0.1.0 // indirect
@@ -48,4 +51,4 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
 
-replace github.com/pion/rtp => ./internal/rtp
+//replace github.com/pion/rtp => ./internal/rtp
