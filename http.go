@@ -1,6 +1,7 @@
 package main
 
 import (
+	"RTSPSender/internal/config"
 	"RTSPSender/internal/webrtc"
 	"bytes"
 	"encoding/json"
@@ -16,7 +17,7 @@ import (
 	"runtime"
 )
 
-const port = ":9001"
+const port = ":9981"
 
 func serveHTTP() {
 	log.Printf("Staring HTTP server at port %s\n", port)
@@ -27,7 +28,8 @@ func serveHTTP() {
 
 	router.POST("/camera/push/stop", Stop)
 	router.POST("/camera/push/start", Start)
-	router.POST("/camera/push/configure", Configure)
+
+	config.Config.Clients = make(map[string]config.RTSPClient)
 
 	err := router.Run(port)
 	if err != nil {
@@ -35,7 +37,7 @@ func serveHTTP() {
 	}
 }
 
-func Configure(c *gin.Context) {
+func Start(c *gin.Context) {
 	configs := c.PostForm("configs")
 	if len(configs) == 0 {
 		MakeResponse(false, -1, "Missing mandatory field `configs`!", c)
@@ -43,108 +45,35 @@ func Configure(c *gin.Context) {
 	}
 	log.Println("Configure Request, params: ", configs)
 
-	var jsonMap map[string]interface{}
-	err := json.Unmarshal([]byte(configs), &jsonMap)
+	var client config.RTSPClient
+	err := json.Unmarshal([]byte(configs), &client)
 	if err != nil {
 		MakeResponse(false, -2, "Decode JSON object failed!", c)
 		return
 	}
 
-	server := jsonMap["server"].(map[string]interface{})
-
-	janus := server["janus"].(string)
-	if len(janus) == 0 {
-		MakeResponse(false, -3, "Missing janus server address", c)
-		return
-	}
-
-	ices := server["ice_servers"].([]interface{})
-	iceServers := make([]string, len(ices))
-	for i, v := range ices {
-		iceServers[i] = v.(string)
-	}
-
-	iceUsername := server["ice_username"].(string)
-	icePasswd := server["ice_credential"].(string)
-
-	if len(iceServers) == 0 || len(iceUsername) == 0 || len(icePasswd) == 0 {
-		MakeResponse(false, -4, "Missing ICE servers", c)
-		return
-	}
-
-	ser := ServerST{
-		janus,
-		port,
-		iceServers,
-		iceUsername,
-		icePasswd,
-	}
-	if ser.Janus == Config.Server.Janus {
-		MakeResponse(false, -6, "Please do NOT configure twice!", c)
-		return
-	} else {
-		Config.Server = ser
-	}
-
-	if len(Config.Streams) == 0 {
-		Config.Streams = make(map[string]StreamST)
-	}
-
-	var failedTimes = 0
-	streams := jsonMap["streams"].([]interface{})
-	for _, s := range streams {
-		stream := s.(map[string]interface{})
-		id := stream["id"].(string)
-		rtsp := stream["url"].(string)
-		if len(id) == 0 || len(rtsp) == 0 {
-			failedTimes++
-			continue
-		}
-		if _, ok := Config.Streams[id]; !ok {
-			Config.Streams[id] = StreamST{
-				ID:           id,
-				URL:          rtsp,
-				OnDemand:     false,
-				DisableAudio: true,
-				Cl:           make(map[string]viewer),
-			}
-		}
-	}
-	if failedTimes > 0 {
-		MakeResponse(false, -5, "Please configure RTSP camera id & URL", c)
-		return
-	}
-
-	// 预先启动 RTSP worker
-	//go serveStreams()
-
-	MakeResponse(true, 1, fmt.Sprintf("Configure {%s} successfully!", configs), c)
-}
-
-func Start(c *gin.Context) {
-	room := c.PostForm("room")
+	room := client.Room
 	if len(room) == 0 {
 		MakeResponse(false, -5, "Please input room number", c)
 		return
 	}
-
-	id := c.PostForm("id")
+	id := client.ID
 	if len(id) == 0 {
 		MakeResponse(false, -5, "Please input camera ID", c)
 		return
 	}
-	if Config.ext(id) {
+	uuid := room + "_" + id
+	if config.Config.Exist(uuid) {
 		MakeResponse(false, -8, fmt.Sprintf("Camera ID %s is currently publishing!", id), c)
 	}
 
-	display := c.PostForm("display")
+	display := client.Display
 	if len(display) == 0 {
 		MakeResponse(false, -4, "Please input display name", c)
 		return
 	}
 
-	mic := c.PostForm("mic")
-
+	mic := client.Mic
 	if runtime.GOOS == "windows" && len(mic) > 0 {
 		/// Recording mic only supports Windows
 		out, err := exec.Command("gst-device-monitor-1.0", "Audio/Source").Output()
@@ -154,8 +83,8 @@ func Start(c *gin.Context) {
 
 		output, _ := GbkToUtf8(out)
 
-		devices := GstDevicesFromCLI(string(output))
-		micID := FindWASAPIMicGUID(mic, devices)
+		devices := config.GstDevicesFromCLI(string(output))
+		micID := config.FindWASAPIMicGUID(mic, devices)
 
 		if len(micID) == 0 {
 			MakeResponse(false, -7, "Invalidate microphone device name!", c)
@@ -164,12 +93,12 @@ func Start(c *gin.Context) {
 		mic = micID
 	}
 
-	if !Config.UpdateStream(id, room, display, mic) {
+	if !config.Config.AddClient(uuid, client) {
 		MakeResponse(false, -5, fmt.Sprintf("Camera(%s) not config yet!", id), c)
 		return
 	}
 
-	msg, err := StreamWebRTC(id)
+	msg, err := StreamWebRTC(uuid)
 
 	if err != nil {
 		if len(msg) == 0 {
@@ -186,21 +115,28 @@ func Start(c *gin.Context) {
 
 func Stop(c *gin.Context) {
 	id := c.PostForm("id")
-	if !Config.ext(id) {
-		MakeResponse(true, 1, fmt.Sprintf("Camera ID %s not exist!", id), c)
+	room := c.PostForm("room")
+	if len(id) == 0 || len(room) == 0 {
+		MakeResponse(false, -5, "Please input room number and Camera ID", c)
+		return
 	}
 
-	stream := Config.Streams[id]
-	// destroy webrtc client
-	if stream.WebRTC != nil {
-		log.Printf("Destroying (%s) WebRTC resource\n", stream.ID)
-		stream.WebRTC.Close()
-		stream.WebRTC = nil
-		Config.Streams[id] = stream
-	} else {
-		log.Printf("Destroy (%s) WebRTC resource failed: client does not exist! exec anyway\n", stream.ID)
+	uuid := room + "_" + id
+	if !config.Config.Exist(uuid) {
+		MakeResponse(false, -1, fmt.Sprintf("Camera ID %s not exist!", id), c)
+		return
 	}
-	//delete(Config.Streams, id)
+
+	client := config.Config.Clients[uuid]
+	// destroy webrtc client
+	if client.WebRTC != nil {
+		log.Printf("Destroying (%s) WebRTC resource\n", client.ID)
+		client.WebRTC.Close()
+		client.WebRTC = nil
+	} else {
+		log.Printf("Destroy (%s) WebRTC resource failed: client does not exist! exec anyway\n", client.ID)
+	}
+	config.Config.DelClient(uuid)
 
 	MakeResponse(true, 1, fmt.Sprintf("Stop ID %s successfully!", id), c)
 }
@@ -216,79 +152,43 @@ func MakeResponse(success bool, code int, data string, c *gin.Context) {
 
 //StreamWebRTC stream video over WebRTC
 func StreamWebRTC(uuid string) (string, error) {
-	if !Config.ext(uuid) {
+	if !config.Config.Exist(uuid) {
 		return "", errors.New(fmt.Sprintf("Stream %s NOT found", uuid))
 	}
 
-	stream := Config.Streams[uuid]
-	//Config.RunIFNotRun(uuid)
-
-	//codecs := Config.coGe(uuid)
-	//if codecs == nil {
-	//	return "", errors.New(fmt.Sprintf("Stream %s Codec NOT found", uuid))
-	//}
+	client := config.Config.Clients[uuid]
 	muxerWebRTC := webrtc.NewMuxer(webrtc.Options{
-		ICEServers:    Config.GetICEServers(),
-		ICEUsername:   Config.GetICEUsername(),
-		ICECredential: Config.GetICECredential(),
+		ICEServers:    client.ICEServers,
+		ICEUsername:   client.ICEUsername,
+		ICECredential: client.ICECredential,
 	})
 
-	msg, err := muxerWebRTC.WriteHeader(stream.URL,
-		Config.Server.Janus,
-		stream.Room,
-		stream.ID,
-		stream.Display,
-		stream.Mic,
-		stream.Pin)
+	msg, err := muxerWebRTC.WriteHeader(
+		client.ID,
+		client.Room,
+		client.Pin,
+		client.URL,
+		client.Janus,
+		client.Mic,
+		client.Display)
 	if err != nil {
 		return msg, err
 	}
 
-	Config.AddRTC2Stream(uuid, muxerWebRTC)
-
-	//go func() {
-	//	cid, ch := Config.clAd(uuid)
-	//
-	//	//defer reconnect(uuid)
-	//	defer Config.clDe(uuid, cid)
-	//	defer muxerWebRTC.Close()
-	//
-	//	var videoStart bool
-	//	noVideo := time.NewTimer(10 * time.Second)
-	//	for {
-	//		select {
-	//		case <-noVideo.C:
-	//			log.Printf("Stream %s no video...", uuid)
-	//			return
-	//		case pck := <-ch:
-	//			if pck.IsKeyFrame {
-	//				noVideo.Reset(10 * time.Second)
-	//				videoStart = true
-	//			}
-	//			if !videoStart {
-	//				continue
-	//			}
-	//			err = muxerWebRTC.WritePacket(pck)
-	//			if err != nil {
-	//				log.Printf("Stream %s writePacket error: %s", uuid, err)
-	//				return
-	//			}
-	//		}
-	//	}
-	//}()
+	config.Config.AddRTC2Stream(uuid, muxerWebRTC)
 
 	return "", nil
 }
 
-func reconnect(uuid string) {
-	log.Println("Prepare to reconnect: ", uuid)
-
-	msg, err := StreamWebRTC(uuid)
-
-	if err != nil {
-		log.Printf("Reconnect error: %s, msg: %s", err, msg)
-	}
-}
+//func reconnect(uuid string) {
+//	log.Println("Prepare to reconnect: ", uuid)
+//
+//	msg, err := StreamWebRTC(uuid)
+//
+//	if err != nil {
+//		log.Printf("Reconnect error: %s, msg: %s", err, msg)
+//	}
+//}
 
 func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {

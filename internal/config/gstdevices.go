@@ -1,4 +1,4 @@
-package main
+package config
 
 import "strings"
 
@@ -11,7 +11,7 @@ type GstDeviceProp struct {
 type GstDevice struct {
 	Name string
 	Class string
-	Caps string
+	Caps       string
 	Properties GstDeviceProp
 }
 
