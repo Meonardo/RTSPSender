@@ -4,7 +4,6 @@ go 1.17
 
 require (
 	github.com/aler9/gortsplib v0.0.0-20220303160144-a541ae8f963c
-	github.com/deepch/vdk v0.0.0-20220208123008-6ba34dc2bf0c
 	github.com/gin-gonic/gin v1.7.7
 	github.com/gorilla/websocket v1.4.2
 	github.com/pion/interceptor v0.1.7
@@ -12,7 +11,10 @@ require (
 	github.com/rs/xid v1.3.0
 )
 
-require github.com/icza/bitio v1.0.0 // indirect
+require (
+	github.com/icza/bitio v1.0.0 // indirect
+	github.com/pion/rtcp v1.2.9 // indirect
+)
 
 require (
 	github.com/gin-contrib/sse v0.1.0 // indirect
@@ -32,7 +34,6 @@ require (
 	github.com/pion/logging v0.2.2 // indirect
 	github.com/pion/mdns v0.0.5 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
-	github.com/pion/rtcp v1.2.9
 	github.com/pion/rtp v1.7.4
 	github.com/pion/sctp v1.8.2 // indirect
 	github.com/pion/sdp/v3 v3.0.4 // indirect
