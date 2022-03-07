@@ -5,42 +5,30 @@ import (
 	"RTSPSender/internal/janus"
 	"errors"
 	"fmt"
-	"github.com/deepch/vdk/codec/h264parser"
+	"github.com/pion/rtp"
 	"log"
 	"strconv"
 	"time"
 
+	"github.com/aler9/gortsplib"
 	"github.com/pion/dtls/v2/pkg/protocol/extension"
 	"github.com/pion/interceptor"
 	"github.com/pion/webrtc/v3"
-
-	"github.com/deepch/vdk/av"
-	"github.com/pion/webrtc/v3/pkg/media"
-)
-
-var (
-	ErrorNotFound          = errors.New("WebRTC Stream Not Found")
-	ErrorCodecNotSupported = errors.New("WebRTC Codec Not Supported")
-	ErrorClientOffline     = errors.New("WebRTC Client Offline")
-	ErrorNotTrackAvailable = errors.New("WebRTC Not Track Available")
 )
 
 type Muxer struct {
-	streams       map[int8]*Stream
 	status        webrtc.ICEConnectionState
 	stop          bool
 	pc            *webrtc.PeerConnection
+
 	audioPipeline *gst.Pipeline
+	videoPipeline *gst.Pipeline
 
 	ClientACK *time.Timer
 	StreamACK *time.Timer
 	Options   Options
 	Janus     *janus.Gateway
-}
-
-type Stream struct {
-	codec av.CodecData
-	track *webrtc.TrackLocalStaticSample
+	rtspClient *gortsplib.Client
 }
 
 type Options struct {
@@ -76,8 +64,7 @@ func watchHandle(handle *janus.Handle) {
 }
 
 func NewMuxer(options Options) *Muxer {
-	tmp := Muxer{Options: options, ClientACK: time.NewTimer(time.Second * 20), StreamACK: time.NewTimer(time.Second * 20), streams: make(map[int8]*Stream)}
-	//go tmp.WaitCloser()
+	tmp := Muxer{Options: options, ClientACK: time.NewTimer(time.Second * 20), StreamACK: time.NewTimer(time.Second * 20)}
 	return &tmp
 }
 
@@ -114,13 +101,14 @@ func (element *Muxer) NewPeerConnection(configuration webrtc.Configuration) (*we
 	return api.NewPeerConnection(configuration)
 }
 
-func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
-	room string, id string, display string, mic string, pin string) (string, error) {
-
-	var WriteHeaderSuccess bool
-	if len(streams) == 0 {
-		return "No stream found", ErrorNotFound
-	}
+func (element *Muxer) WriteHeader(
+	ID string,
+	Room string,
+	Pin string,
+	RTSP string,
+	Janus string,
+	Mic string,
+	Display string) (string, error) {
 
 	peerConnection, err := element.NewPeerConnection(webrtc.Configuration{
 		SDPSemantics: webrtc.SDPSemanticsUnifiedPlanWithFallback,
@@ -128,20 +116,11 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 	if err != nil {
 		return "Create pc failed", err
 	}
-	defer func() {
-		if !WriteHeaderSuccess {
-			element.Close()
-		}
-	}()
 
-	var hasAudio = len(mic) > 0 && mic != "mute"
+	var hasAudio = len(Mic) > 0 && Mic != "mute"
 	if hasAudio {
 		// Create an audio track
-		audioTrack, err := webrtc.NewTrackLocalStaticSample(
-			webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus},
-			"audio",
-			"microphone",
-		)
+		audioTrack, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus}, "audio", "microphone")
 		if err != nil {
 			return "Audio track create failed", err
 		}
@@ -149,33 +128,30 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 			return "Add audio track failed", err
 		}
 
-		var audioPipelineDesc = fmt.Sprintf("wasapisrc device=\"%s\" ! queue ! audioconvert ! audioresample", mic)
+		var audioPipelineDesc = fmt.Sprintf("wasapisrc device=\"%s\" ! queue ! audioconvert ! audioresample", Mic)
 		audioPipeline := gst.CreatePipeline("opus", []*webrtc.TrackLocalStaticSample{audioTrack}, audioPipelineDesc)
 		audioPipeline.Start()
 		element.audioPipeline = audioPipeline
 	}
 
-	for i, i2 := range streams {
-		var track *webrtc.TrackLocalStaticSample
-		if i2.Type().IsVideo() {
-			if i2.Type() == av.H264 {
-				track, err = webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{
-					MimeType: "video/h264",
-				}, "video", "rtsp-video")
-				if err != nil {
-					return "Create track failed", err
-				}
-				if _, err = peerConnection.AddTrack(track); err != nil {
-					return "Add video track failed", err
-				}
-			}
-		}
-		element.streams[int8(i)] = &Stream{track: track, codec: i2}
+	// Create a video track
+	videoTrack, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264}, "video", "rtsp")
+		//webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264}, "video", "rtsp")
+	if err != nil {
+		return "Create video track failed", err
+	} else if _, err = peerConnection.AddTrack(videoTrack); err != nil {
+		return "Add video track failed", err
 	}
 
-	if len(element.streams) == 0 {
-		return "", ErrorNotTrackAvailable
-	}
+	// rtspsrc location=rtsp://192.168.100.234/1 latency=0 ! rtph264depay ! queue ! h264parse ! video/x-h264,alignment=nal,stream-format=byte-stream ! appsink emit-signals=True name=h264_sink
+	//var videoPipelineDesc = fmt.Sprintf("rtspsrc location=%s latency=0 ! queue ! rtph264depay ! h264parse ! video/x-h264,alignment=nal,stream-format=byte-stream", rtsp)
+	//videoPipeline := gst.CreatePipeline("h264", []*webrtc.TrackLocalStaticSample{videoTrack}, videoPipelineDesc)
+	//videoPipeline.Start()
+	//element.videoPipeline = videoPipeline
+
+	// Connect to RTSP Camera
+	element.connectRTSPCamera(RTSP, videoTrack)
+
 	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
 		element.status = connectionState
 	})
@@ -200,7 +176,7 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 	}
 
 	// Janus
-	gateway, err := janus.Connect(janusServer)
+	gateway, err := janus.Connect(Janus)
 	if err != nil {
 		return "Connect janus server error", err
 	}
@@ -231,8 +207,8 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 
 	go watchHandle(handle)
 
-	roomNum, err := strconv.Atoi(room)
-	publisherID, err := strconv.Atoi(id)
+	roomNum, err := strconv.Atoi(Room)
+	publisherID, err := strconv.Atoi(ID)
 	if err != nil {
 		roomNum = 1234
 		log.Printf("Room number invalid %s", err)
@@ -243,11 +219,11 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 		"ptype":   "publisher",
 		"room":    roomNum,
 		"id":      publisherID,
-		"display": display,
-		"pin":     pin,
+		"display": Display,
+		"pin":     Pin,
 	}, nil)
 	if err != nil {
-		return fmt.Sprintf("Join room %s failed", room), err
+		return fmt.Sprintf("Join room %s failed", Room), err
 	}
 	handle.User = fmt.Sprint(publisherID)
 
@@ -262,7 +238,7 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 		"trickle": false,
 	})
 	if err != nil {
-		return fmt.Sprintf("Publish to room %s failed", room), err
+		return fmt.Sprintf("Publish to room %s failed", Room), err
 	}
 
 	if msg.Jsep != nil {
@@ -271,63 +247,29 @@ func (element *Muxer) WriteHeader(streams []av.CodecData, janusServer string,
 			SDP:  msg.Jsep["sdp"].(string),
 		})
 		if err != nil {
-			return fmt.Sprintf("No remote sdp found %s error", room), err
+			return fmt.Sprintf("No remote sdp found %s error", Room), err
 		}
-		WriteHeaderSuccess = true
 
 		return "", nil
 	} else {
-		return fmt.Sprintf("No JSEP found %s error", room), err
+		return fmt.Sprintf("No JSEP found %s error", Room), err
 	}
 }
 
-func (element *Muxer) WritePacket(pkt av.Packet) (err error) {
-	//log.Println("WritePacket", pkt.Time, element.stop, webrtc.ICEConnectionStateConnected, pkt.Idx, element.streams[pkt.Idx])
-
-	var WritePacketSuccess bool
-	defer func() {
-		if !WritePacketSuccess {
-			element.Close()
+func (element *Muxer) connectRTSPCamera(rtsp string, track *webrtc.TrackLocalStaticRTP) {
+	go func() {
+		c := gortsplib.Client{
+			OnPacketRTP: func(trackID int, pkt *rtp.Packet) {
+				err :=  track.WriteRTP(pkt)
+				if err != nil {
+					fmt.Println("Write RTP pkt error: ", err)
+				}
+			},
 		}
+		element.rtspClient = &c
+		err := c.StartReadingAndWait(rtsp)
+		log.Println("Connect to RTSP camera error", err)
 	}()
-	if element.stop {
-		return ErrorClientOffline
-	}
-	if element.status == webrtc.ICEConnectionStateChecking {
-		WritePacketSuccess = true
-		return nil
-	}
-	if element.status != webrtc.ICEConnectionStateConnected {
-		return nil
-	}
-	if tmp, ok := element.streams[pkt.Idx]; ok {
-		element.StreamACK.Reset(10 * time.Second)
-		if len(pkt.Data) < 5 {
-			return nil
-		}
-		if tmp.codec.Type() == av.H264  {
-			codec := tmp.codec.(h264parser.CodecData)
-			pkt.Data = pkt.Data[4:]
-
-			if pkt.IsKeyFrame {
-				pkt.Data = append([]byte{0, 0, 0, 1}, pkt.Data...)
-				pkt.Data = append(codec.SPS(), pkt.Data...)
-				pkt.Data = append([]byte{0, 0, 0, 1}, pkt.Data...)
-				pkt.Data = append(codec.PPS(), pkt.Data...)
-				pkt.Data = append([]byte{0, 0, 0, 1}, pkt.Data...)
-			}
-		} else {
-			return ErrorCodecNotSupported
-		}
-		err = tmp.track.WriteSample(media.Sample{Data: pkt.Data, Duration: pkt.Duration})
-		if err == nil {
-			WritePacketSuccess = true
-		}
-		return err
-	} else {
-		WritePacketSuccess = true
-		return nil
-	}
 }
 
 func (element *Muxer) Close() {
@@ -348,6 +290,12 @@ func (element *Muxer) Close() {
 	if element.audioPipeline != nil {
 		element.audioPipeline.Stop()
 		element.audioPipeline = nil
+	}
+
+	if element.rtspClient != nil {
+		err := element.rtspClient.Close()
+		log.Println("Close RTSP client failed", err)
+		element.rtspClient = nil
 	}
 
 	if element.pc != nil {
