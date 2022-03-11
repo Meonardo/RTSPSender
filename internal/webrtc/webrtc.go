@@ -5,10 +5,11 @@ import (
 	"RTSPSender/internal/janus"
 	"errors"
 	"fmt"
-	"github.com/pion/rtp"
 	"log"
 	"strconv"
 	"time"
+
+	"github.com/pion/rtp"
 
 	"github.com/aler9/gortsplib"
 	"github.com/pion/dtls/v2/pkg/protocol/extension"
@@ -17,17 +18,17 @@ import (
 )
 
 type Muxer struct {
-	status        webrtc.ICEConnectionState
-	stop          bool
-	pc            *webrtc.PeerConnection
+	status webrtc.ICEConnectionState
+	stop   bool
+	pc     *webrtc.PeerConnection
 
 	audioPipeline *gst.Pipeline
-	videoPipeline *gst.Pipeline
+	// videoPipeline *gst.Pipeline
 
-	ClientACK *time.Timer
-	StreamACK *time.Timer
-	Options   Options
-	Janus     *janus.Gateway
+	ClientACK  *time.Timer
+	StreamACK  *time.Timer
+	Options    Options
+	Janus      *janus.Gateway
 	rtspClient *gortsplib.Client
 }
 
@@ -136,7 +137,7 @@ func (element *Muxer) WriteHeader(
 
 	// Create a video track
 	videoTrack, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264}, "video", "rtsp")
-		//webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264}, "video", "rtsp")
+	//webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264}, "video", "rtsp")
 	if err != nil {
 		return "Create video track failed", err
 	} else if _, err = peerConnection.AddTrack(videoTrack); err != nil {
@@ -260,7 +261,7 @@ func (element *Muxer) connectRTSPCamera(rtsp string, track *webrtc.TrackLocalSta
 	go func() {
 		c := gortsplib.Client{
 			OnPacketRTP: func(trackID int, pkt *rtp.Packet) {
-				err :=  track.WriteRTP(pkt)
+				err := track.WriteRTP(pkt)
 				if err != nil {
 					fmt.Println("Write RTP pkt error: ", err)
 				}

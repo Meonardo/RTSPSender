@@ -3,18 +3,13 @@ package main
 import (
 	"RTSPSender/internal/config"
 	"RTSPSender/internal/webrtc"
-	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"golang.org/x/text/encoding/simplifiedchinese"
-	"golang.org/x/text/transform"
-	"io/ioutil"
 	"log"
 	"net/http"
-	"os/exec"
 	"runtime"
+
+	"github.com/gin-gonic/gin"
 )
 
 const port = ":9981"
@@ -28,8 +23,6 @@ func serveHTTP() {
 
 	router.POST("/camera/push/stop", Stop)
 	router.POST("/camera/push/start", Start)
-
-	config.Config.Clients = make(map[string]config.RTSPClient)
 
 	err := router.Run(port)
 	if err != nil {
@@ -75,22 +68,12 @@ func Start(c *gin.Context) {
 
 	mic := client.Mic
 	if runtime.GOOS == "windows" && len(mic) > 0 {
-		/// Recording mic only supports Windows
-		out, err := exec.Command("gst-device-monitor-1.0", "Audio/Source").Output()
-		if err != nil {
-			log.Println("Read gst-device-monitor-1.0 cmd error:", err)
-		}
-
-		output, _ := GbkToUtf8(out)
-
-		devices := config.GstDevicesFromCLI(string(output))
-		micID := config.FindWASAPIMicGUID(mic, devices)
-
+		micID := config.MicGUIDFromName(mic)
 		if len(micID) == 0 {
 			MakeResponse(false, -7, "Invalidate microphone device name!", c)
 			return
 		}
-		mic = micID
+		client.Mic = micID
 	}
 
 	if !config.Config.AddClient(uuid, client) {
@@ -153,7 +136,7 @@ func MakeResponse(success bool, code int, data string, c *gin.Context) {
 //StreamWebRTC stream video over WebRTC
 func StreamWebRTC(uuid string) (string, error) {
 	if !config.Config.Exist(uuid) {
-		return "", errors.New(fmt.Sprintf("Stream %s NOT found", uuid))
+		return "", fmt.Errorf(fmt.Sprintf("Stream %s NOT found", uuid))
 	}
 
 	client := config.Config.Clients[uuid]
@@ -205,13 +188,4 @@ func CORSMiddleware() gin.HandlerFunc {
 
 		c.Next()
 	}
-}
-
-func GbkToUtf8(s []byte) ([]byte, error) {
-	reader := transform.NewReader(bytes.NewReader(s), simplifiedchinese.GBK.NewDecoder())
-	d, e := ioutil.ReadAll(reader)
-	if e != nil {
-		return nil, e
-	}
-	return d, nil
 }

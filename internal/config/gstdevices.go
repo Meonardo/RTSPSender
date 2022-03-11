@@ -1,16 +1,25 @@
 package config
 
-import "strings"
+import (
+	"bytes"
+	"io/ioutil"
+	"log"
+	"os/exec"
+	"strings"
+
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/transform"
+)
 
 type GstDeviceProp struct {
-	Api string
-	GUID string
+	Api         string
+	GUID        string
 	Description string
 }
 
 type GstDevice struct {
-	Name string
-	Class string
+	Name       string
+	Class      string
 	Caps       string
 	Properties GstDeviceProp
 }
@@ -22,7 +31,7 @@ func NewGstDeviceProp(properties []string) GstDeviceProp {
 		if len(d) > 0 {
 			t := strings.Split(d, "=")
 			t1 := strings.TrimSpace(t[0])
-			t2 := strings.TrimSpace(t[len(t) - 1])
+			t2 := strings.TrimSpace(t[len(t)-1])
 
 			if strings.Contains(t1, "api") && len(api) == 0 {
 				api = t2
@@ -48,7 +57,7 @@ func NewGstDevice(class []string, properties []string) GstDevice {
 		if len(d) > 0 {
 			t := strings.Split(d, ":")
 			t1 := strings.TrimSpace(t[0])
-			t2 := strings.TrimSpace(t[len(t) - 1])
+			t2 := strings.TrimSpace(t[len(t)-1])
 			if t1 == "name" {
 				name = t2
 			}
@@ -62,7 +71,7 @@ func NewGstDevice(class []string, properties []string) GstDevice {
 	}
 
 	return GstDevice{
-		Name: name,  Class: class_, Caps: caps, Properties: NewGstDeviceProp(properties),
+		Name: name, Class: class_, Caps: caps, Properties: NewGstDeviceProp(properties),
 	}
 }
 
@@ -94,7 +103,7 @@ func GstDevicesFromCLI(content string) []GstDevice {
 		index := Index(devices_, "properties:")
 		if index != -1 {
 			left := devices_[:index]
-			right := devices_[index + 1:]
+			right := devices_[index+1:]
 
 			devices = append(devices, NewGstDevice(left, right))
 		}
@@ -114,4 +123,27 @@ func FindWASAPIMicGUID(mic string, devices []GstDevice) string {
 	}
 
 	return ""
+}
+
+func MicGUIDFromName(name string) string {
+	out, err := exec.Command("gst-device-monitor-1.0", "Audio/Source").Output()
+	if err != nil {
+		log.Println("Read gst-device-monitor-1.0 cmd error:", err)
+	}
+
+	output, _ := gbkToUtf8(out)
+
+	devices := GstDevicesFromCLI(string(output))
+	micID := FindWASAPIMicGUID(name, devices)
+
+	return micID
+}
+
+func gbkToUtf8(s []byte) ([]byte, error) {
+	reader := transform.NewReader(bytes.NewReader(s), simplifiedchinese.GBK.NewDecoder())
+	d, e := ioutil.ReadAll(reader)
+	if e != nil {
+		return nil, e
+	}
+	return d, nil
 }
