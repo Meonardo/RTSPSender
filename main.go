@@ -13,14 +13,15 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 )
 
-const DEBUG = true
+const DEBUG = false
 
 func main() {
 	if DEBUG {
+		makeConfig()
 		go serveHTTP()
-		MakeConfig()
 
 		sigs := make(chan os.Signal, 1)
 		done := make(chan bool, 1)
@@ -36,16 +37,27 @@ func main() {
 	}
 }
 
-//MakeConfig :
-//export MakeConfig
-func MakeConfig() {
+func makeConfig() {
+	if config.Config.Clients != nil {
+		log.Println("Already make config, ignore it.")
+		return
+	}
 	config.Config.Clients = make(map[string]config.RTSPClient)
+
 	if runtime.GOOS == "windows" {
 		home := os.Getenv("HOMEDRIVE") + os.Getenv("HOMEPATH")
 		if home == "" {
 			home = os.Getenv("USERPROFILE")
 		}
-		LOG_FILE := home + "\\rtspsender_log"
+
+		logPath := home + "\\RTSPSender"
+		if _, err := os.Stat(logPath); os.IsNotExist(err) {
+			err := os.Mkdir(logPath, 0644)
+			if err != nil {
+				log.Fatalln(err)
+			}
+		}
+		LOG_FILE := logPath + fmt.Sprintf("\\%d", time.Now().Unix())
 		logFile, err := os.OpenFile(LOG_FILE, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
 		if err != nil {
 			log.Fatalln(err)
@@ -61,6 +73,10 @@ func MakeConfig() {
 //StartPublishing :
 //export StartPublishing
 func StartPublishing(p *C.char) int {
+	// Config first
+	makeConfig()
+	var startedSuccess = false
+
 	c := strings.Fields(C.GoString(p))
 	configs := strings.Join(c, "")
 	log.Printf("Configs = %s", configs)
@@ -110,6 +126,12 @@ func StartPublishing(p *C.char) int {
 		log.Println("Found microphone device ID: ", micID)
 	}
 
+	defer func() {
+		if !startedSuccess {
+			config.Config.DelClient(uuid)
+		}
+	}()
+
 	if !config.Config.AddClient(uuid, client) {
 		log.Printf("Camera(%s) add failed!", id)
 		return -8
@@ -127,6 +149,7 @@ func StartPublishing(p *C.char) int {
 		return -9
 	}
 
+	startedSuccess = true
 	return 0
 }
 
