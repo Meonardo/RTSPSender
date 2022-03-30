@@ -1,7 +1,6 @@
 package webrtc
 
 import (
-	gst "RTSPSender/internal/gstreamer-src"
 	"RTSPSender/internal/janus"
 	"errors"
 	"fmt"
@@ -9,12 +8,18 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/pion/mediadevices"
 	"github.com/pion/rtp"
 
 	"github.com/aler9/gortsplib"
 	"github.com/pion/dtls/v2/pkg/protocol/extension"
 	"github.com/pion/interceptor"
 	"github.com/pion/webrtc/v3"
+
+	"github.com/pion/mediadevices/pkg/codec/opus" // This is required to use opus audio encoder
+	"github.com/pion/mediadevices/pkg/driver"
+	_ "github.com/pion/mediadevices/pkg/driver/microphone" // This is required to register microphone adapter
+	"github.com/pion/mediadevices/pkg/prop"
 )
 
 type Muxer struct {
@@ -22,14 +27,12 @@ type Muxer struct {
 	stop   bool
 	pc     *webrtc.PeerConnection
 
-	audioPipeline *gst.Pipeline
-	// videoPipeline *gst.Pipeline
-
-	ClientACK  *time.Timer
-	StreamACK  *time.Timer
-	Options    Options
-	Janus      *janus.Gateway
-	rtspClient *gortsplib.Client
+	ClientACK          *time.Timer
+	StreamACK          *time.Timer
+	Options            Options
+	Janus              *janus.Gateway
+	rtspClient         *gortsplib.Client
+	audioCodecSelector *mediadevices.CodecSelector
 }
 
 type Options struct {
@@ -53,6 +56,21 @@ func watchHandle(handle *janus.Handle) {
 		case *janus.SlowLinkMsg:
 			log.Println("SlowLinkMsg type, user:", handle.User)
 		case *janus.MediaMsg:
+			// if msg.Type == "audio" {
+			// 	noAudioTimeOut := time.NewTimer(3 * time.Second)
+			// 	if !msg.Receiving {
+			// 		go func() {
+			// 			for {
+			// 				select {
+			// 				case <-noAudioTimeOut.C:
+			// 					log.Println("No audio 3s")
+			// 				}
+			// 			}
+			// 		}()
+			// 	} else {
+			// 		noAudioTimeOut.Reset(3 * time.Second)
+			// 	}
+			// }
 			log.Println("MediaEvent type", msg.Type, "receiving", msg.Receiving, "user:", handle.User)
 		case *janus.WebRTCUpMsg:
 			log.Println("WebRTCUpMsg type, user:", handle.User)
@@ -98,6 +116,14 @@ func (element *Muxer) NewPeerConnection(configuration webrtc.Configuration) (*we
 		log.Println("Set UDP ports to", element.Options.PortMin, "..", element.Options.PortMax)
 	}
 
+	opusParams, err := opus.NewParams()
+	if err != nil {
+		log.Printf("Create opus params failed %s", err)
+	}
+	audioCodecSelector := mediadevices.NewCodecSelector(mediadevices.WithAudioEncoders(&opusParams))
+	audioCodecSelector.Populate(m)
+	element.audioCodecSelector = audioCodecSelector
+
 	api := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(i), webrtc.WithSettingEngine(s))
 	return api.NewPeerConnection(configuration)
 }
@@ -119,20 +145,49 @@ func (element *Muxer) WriteHeader(
 	}
 
 	var hasAudio = len(Mic) > 0 && Mic != "mute"
+	var deviceID = ""
 	if hasAudio {
-		// Create an audio track
-		audioTrack, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus}, "audio", "microphone")
-		if err != nil {
-			return "Audio track create failed", err
+		deviceInfo := mediadevices.EnumerateDevices()
+		if len(deviceInfo) > 0 {
+			for _, device := range deviceInfo {
+				if device.Kind == mediadevices.AudioInput && device.Name == Mic {
+					hasAudio = true
+					deviceID = device.DeviceID
+					fmt.Printf("Found Audio Device: %s, name: %s", device, device.Name)
+					break
+				} else {
+					hasAudio = false
+				}
+			}
+		} else {
+			hasAudio = false
 		}
-		if _, err = peerConnection.AddTrack(audioTrack); err != nil {
-			return "Add audio track failed", err
-		}
+	}
 
-		var audioPipelineDesc = fmt.Sprintf("wasapisrc device=\"%s\" ! queue ! audioconvert ! audioresample", Mic)
-		audioPipeline := gst.CreatePipeline("opus", []*webrtc.TrackLocalStaticSample{audioTrack}, audioPipelineDesc)
-		audioPipeline.Start()
-		element.audioPipeline = audioPipeline
+	if hasAudio && element.audioCodecSelector != nil {
+		s, err := mediadevices.GetUserMedia(mediadevices.MediaStreamConstraints{
+			Audio: func(c *mediadevices.MediaTrackConstraints) {
+				c.DeviceID = prop.String(deviceID)
+				c.SampleSize = prop.Int(2)
+			},
+			Codec: element.audioCodecSelector,
+		})
+
+		if err != nil {
+			log.Println("Audio track create failed", err)
+			hasAudio = false
+		} else {
+			audioTrack := s.GetAudioTracks()[0].(*mediadevices.AudioTrack)
+			_, err = peerConnection.AddTransceiverFromTrack(audioTrack,
+				webrtc.RTPTransceiverInit{
+					Direction: webrtc.RTPTransceiverDirectionSendonly,
+				},
+			)
+
+			if err != nil {
+				return "Add audio track failed", err
+			}
+		}
 	}
 
 	// Create a video track
@@ -143,12 +198,6 @@ func (element *Muxer) WriteHeader(
 	} else if _, err = peerConnection.AddTrack(videoTrack); err != nil {
 		return "Add video track failed", err
 	}
-
-	// rtspsrc location=rtsp://192.168.100.234/1 latency=0 ! rtph264depay ! queue ! h264parse ! video/x-h264,alignment=nal,stream-format=byte-stream ! appsink emit-signals=True name=h264_sink
-	//var videoPipelineDesc = fmt.Sprintf("rtspsrc location=%s latency=0 ! queue ! rtph264depay ! h264parse ! video/x-h264,alignment=nal,stream-format=byte-stream", rtsp)
-	//videoPipeline := gst.CreatePipeline("h264", []*webrtc.TrackLocalStaticSample{videoTrack}, videoPipelineDesc)
-	//videoPipeline.Start()
-	//element.videoPipeline = videoPipeline
 
 	// Connect to RTSP Camera
 	element.connectRTSPCamera(RTSP, videoTrack)
@@ -273,6 +322,20 @@ func (element *Muxer) connectRTSPCamera(rtsp string, track *webrtc.TrackLocalSta
 	}()
 }
 
+func (element *Muxer) closeAudioDriverIfNecessary() {
+	audioDrivers := driver.GetManager().Query(driver.FilterAudioRecorder())
+	for _, d := range audioDrivers {
+		if d.Status() != driver.StateOpened {
+			log.Println("Closing microphone...")
+			err := d.Close()
+			if err != nil {
+				log.Println("Close driver failed", err)
+			}
+			log.Println("Close microphone finished")
+		}
+	}
+}
+
 func (element *Muxer) Close() {
 	if element.stop {
 		log.Println("This WebRTC instance is stopping, please wait...")
@@ -288,11 +351,6 @@ func (element *Muxer) Close() {
 		element.Janus = nil
 	}
 
-	if element.audioPipeline != nil {
-		element.audioPipeline.Stop()
-		element.audioPipeline = nil
-	}
-
 	if element.rtspClient != nil {
 		err := element.rtspClient.Close()
 		log.Println("Close RTSP client failed", err)
@@ -300,10 +358,15 @@ func (element *Muxer) Close() {
 	}
 
 	if element.pc != nil {
+		log.Println("Closing pc...")
 		err := element.pc.Close()
 		if err != nil {
 			log.Println("Close pc failed", err)
 		}
 		element.pc = nil
+
+		log.Println("Close pc finished")
+
+		element.closeAudioDriverIfNecessary()
 	}
 }

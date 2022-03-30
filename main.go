@@ -44,7 +44,7 @@ func makeConfig() {
 	}
 	config.Config.Clients = make(map[string]config.RTSPClient)
 
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" && !DEBUG {
 		home := os.Getenv("HOMEDRIVE") + os.Getenv("HOMEPATH")
 		if home == "" {
 			home = os.Getenv("USERPROFILE")
@@ -115,16 +115,16 @@ func StartPublishing(p *C.char) int {
 		return -6
 	}
 
-	mic := client.Mic
-	if runtime.GOOS == "windows" && len(mic) > 0 {
-		micID := config.MicGUIDFromName(mic)
-		if len(micID) == 0 {
-			log.Println("Invalidate microphone device name!")
-			return -7
-		}
-		client.Mic = micID
-		log.Println("Found microphone device ID: ", micID)
-	}
+	// mic := client.Mic
+	// if runtime.GOOS == "windows" && len(mic) > 0 {
+	// 	micID := config.MicGUIDFromName(mic)
+	// 	if len(micID) == 0 {
+	// 		log.Println("Invalidate microphone device name!")
+	// 		return -7
+	// 	}
+	// 	client.Mic = micID
+	// 	log.Println("Found microphone device ID: ", micID)
+	// }
 
 	defer func() {
 		if !startedSuccess {

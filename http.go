@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"runtime"
 
 	"github.com/gin-gonic/gin"
 )
@@ -31,6 +30,8 @@ func serveHTTP() {
 }
 
 func Start(c *gin.Context) {
+	var startedSuccess = false
+
 	configs := c.PostForm("configs")
 	if len(configs) == 0 {
 		MakeResponse(false, -1, "Missing mandatory field `configs`!", c)
@@ -58,6 +59,7 @@ func Start(c *gin.Context) {
 	uuid := room + "_" + id
 	if config.Config.Exist(uuid) {
 		MakeResponse(false, -8, fmt.Sprintf("Camera ID %s is currently publishing!", id), c)
+		return
 	}
 
 	display := client.Display
@@ -66,15 +68,21 @@ func Start(c *gin.Context) {
 		return
 	}
 
-	mic := client.Mic
-	if runtime.GOOS == "windows" && len(mic) > 0 {
-		micID := config.MicGUIDFromName(mic)
-		if len(micID) == 0 {
-			MakeResponse(false, -7, "Invalidate microphone device name!", c)
-			return
+	// mic := client.Mic
+	// if runtime.GOOS == "windows" && len(mic) > 0 {
+	// 	micID := config.MicGUIDFromName(mic)
+	// 	if len(micID) == 0 {
+	// 		MakeResponse(false, -7, "Invalidate microphone device name!", c)
+	// 		return
+	// 	}
+	// 	// client.Mic = micID
+	// }
+
+	defer func() {
+		if !startedSuccess {
+			config.Config.DelClient(uuid)
 		}
-		client.Mic = micID
-	}
+	}()
 
 	if !config.Config.AddClient(uuid, client) {
 		MakeResponse(false, -5, fmt.Sprintf("Camera(%s) not config yet!", id), c)
@@ -93,6 +101,7 @@ func Start(c *gin.Context) {
 		return
 	}
 
+	startedSuccess = true
 	MakeResponse(true, 1, fmt.Sprintf("Publish camera %s in Room %s successfully!", id, room), c)
 }
 
@@ -119,7 +128,10 @@ func Stop(c *gin.Context) {
 	} else {
 		log.Printf("Destroy (%s) WebRTC resource failed: client does not exist! exec anyway\n", client.ID)
 	}
+
+	log.Printf("Ready to delete client...")
 	config.Config.DelClient(uuid)
+	log.Printf("Delete client")
 
 	MakeResponse(true, 1, fmt.Sprintf("Stop ID %s successfully!", id), c)
 }
