@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pion/mediadevices"
@@ -23,16 +24,15 @@ import (
 )
 
 type Muxer struct {
-	status webrtc.ICEConnectionState
-	stop   bool
-	pc     *webrtc.PeerConnection
-
-	ClientACK          *time.Timer
-	StreamACK          *time.Timer
-	Options            Options
-	Janus              *janus.Gateway
+	status             webrtc.ICEConnectionState
+	stop               bool
+	pc                 *webrtc.PeerConnection
 	rtspClient         *gortsplib.Client
 	audioCodecSelector *mediadevices.CodecSelector
+	stopSendingAudio   bool
+
+	Options Options
+	Janus   *janus.Gateway
 }
 
 type Options struct {
@@ -48,7 +48,7 @@ type Options struct {
 	PortMax uint16
 }
 
-func watchHandle(handle *janus.Handle) {
+func (element *Muxer) janusEventsHandle(handle *janus.Handle) {
 	// wait for event
 	for {
 		msg := <-handle.Events
@@ -56,21 +56,21 @@ func watchHandle(handle *janus.Handle) {
 		case *janus.SlowLinkMsg:
 			log.Println("SlowLinkMsg type, user:", handle.User)
 		case *janus.MediaMsg:
-			// if msg.Type == "audio" {
-			// 	noAudioTimeOut := time.NewTimer(3 * time.Second)
-			// 	if !msg.Receiving {
-			// 		go func() {
-			// 			for {
-			// 				select {
-			// 				case <-noAudioTimeOut.C:
-			// 					log.Println("No audio 3s")
-			// 				}
-			// 			}
-			// 		}()
-			// 	} else {
-			// 		noAudioTimeOut.Reset(3 * time.Second)
-			// 	}
-			// }
+			if msg.Type == "audio" {
+				if !msg.Receiving {
+					if !element.stopSendingAudio {
+						element.stopSendingAudio = true
+						time.AfterFunc(3*time.Second, func() {
+							if element.stopSendingAudio {
+								log.Println("No audio in 3s, closinng audio driver...")
+								element.closeAudioDriverIfNecessary()
+							}
+						})
+					}
+				} else {
+					element.stopSendingAudio = false
+				}
+			}
 			log.Println("MediaEvent type", msg.Type, "receiving", msg.Receiving, "user:", handle.User)
 		case *janus.WebRTCUpMsg:
 			log.Println("WebRTCUpMsg type, user:", handle.User)
@@ -83,7 +83,7 @@ func watchHandle(handle *janus.Handle) {
 }
 
 func NewMuxer(options Options) *Muxer {
-	tmp := Muxer{Options: options, ClientACK: time.NewTimer(time.Second * 20), StreamACK: time.NewTimer(time.Second * 20)}
+	tmp := Muxer{Options: options}
 	return &tmp
 }
 
@@ -150,17 +150,17 @@ func (element *Muxer) WriteHeader(
 		deviceInfo := mediadevices.EnumerateDevices()
 		if len(deviceInfo) > 0 {
 			for _, device := range deviceInfo {
-				if device.Kind == mediadevices.AudioInput && device.Name == Mic {
+				deviceName := strings.ReplaceAll(device.Name, " ", "")
+				if device.Kind == mediadevices.AudioInput && deviceName == Mic {
 					hasAudio = true
 					deviceID = device.DeviceID
-					fmt.Printf("Found Audio Device: %s, name: %s", device, device.Name)
+					log.Printf("Found Audio Device: %s, name: %s", device, device.Name)
 					break
-				} else {
-					hasAudio = false
 				}
 			}
 		} else {
 			hasAudio = false
+			log.Println("No microphone device found in this machine, not going to send audio...")
 		}
 	}
 
@@ -255,7 +255,7 @@ func (element *Muxer) WriteHeader(
 		}
 	}()
 
-	go watchHandle(handle)
+	go element.janusEventsHandle(handle)
 
 	roomNum, err := strconv.Atoi(Room)
 	publisherID, err := strconv.Atoi(ID)
@@ -314,7 +314,10 @@ func (element *Muxer) connectRTSPCamera(rtsp string, track *webrtc.TrackLocalSta
 				if err != nil {
 					fmt.Println("Write RTP pkt error: ", err)
 				}
-			},
+			}, Transport: func() *gortsplib.Transport {
+				v := gortsplib.TransportTCP
+				return &v
+			}(),
 		}
 		element.rtspClient = &c
 		err := c.StartReadingAndWait(rtsp)

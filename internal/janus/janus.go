@@ -15,7 +15,7 @@ import (
 	"github.com/rs/xid"
 )
 
-var debug = false
+var debug = true
 
 func unexpected(request string) error {
 	return fmt.Errorf("Unexpected response received to '%s' request", request)
@@ -182,10 +182,10 @@ func (gateway *Gateway) recv() {
 
 		if debug {
 			// log message being sent
-			var log bytes.Buffer
-			json.Indent(&log, data, "<", "   ")
-			log.Write([]byte("\n"))
-			log.WriteTo(os.Stdout)
+			var logs bytes.Buffer
+			json.Indent(&logs, data, "<", "   ")
+			logs.Write([]byte("\n"))
+			log.Println(logs.String())
 		}
 
 		typeFunc, ok := msgtypes[base.Type]
