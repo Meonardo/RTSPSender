@@ -7,22 +7,20 @@ require (
 	github.com/gin-gonic/gin v1.7.7
 	github.com/gorilla/websocket v1.5.0
 	github.com/pion/interceptor v0.1.10
+	github.com/pion/mediadevices v0.3.3
 	github.com/pion/webrtc/v3 v3.1.27
 	github.com/rs/xid v1.4.0
-	github.com/pion/mediadevices v0.3.3
 )
 
 require (
 	github.com/gen2brain/malgo v0.10.35 // indirect
-	github.com/icza/bitio v1.1.0 // indirect
-	github.com/pion/rtcp v1.2.9 // indirect
-	golang.org/x/image v0.0.0-20220302094943-723b81ca9867 // indirect
 	github.com/gin-contrib/sse v0.1.0 // indirect
 	github.com/go-playground/locales v0.14.0 // indirect
 	github.com/go-playground/universal-translator v0.18.0 // indirect
 	github.com/go-playground/validator/v10 v10.10.1 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/google/uuid v1.3.0 // indirect
+	github.com/icza/bitio v1.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/leodido/go-urn v1.2.1 // indirect
 	github.com/mattn/go-isatty v0.0.14 // indirect
@@ -34,6 +32,7 @@ require (
 	github.com/pion/logging v0.2.2 // indirect
 	github.com/pion/mdns v0.0.5 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
+	github.com/pion/rtcp v1.2.9 // indirect
 	github.com/pion/rtp v1.7.9
 	github.com/pion/sctp v1.8.2 // indirect
 	github.com/pion/sdp/v3 v3.0.4 // indirect
@@ -44,6 +43,7 @@ require (
 	github.com/pion/udp v0.1.1 // indirect
 	github.com/ugorji/go/codec v1.2.7 // indirect
 	golang.org/x/crypto v0.0.0-20220321153916-2c7772ba3064 // indirect
+	golang.org/x/image v0.0.0-20220302094943-723b81ca9867 // indirect
 	golang.org/x/net v0.0.0-20220325170049-de3da57026de // indirect
 	golang.org/x/sys v0.0.0-20220327210214-530d0810a4d0 // indirect
 	golang.org/x/text v0.3.7
@@ -52,4 +52,4 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
 
-//replace github.com/pion/rtp => ./internal/rtp
+replace github.com/pion/mediadevices v0.3.3 => github.com/Meonardo/mediadevices v1.3.4

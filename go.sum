@@ -1,3 +1,5 @@
+github.com/Meonardo/mediadevices v1.3.4 h1:sq/yNDwn4EEBiwPLWXLkr31cmjh7WzYDwhstRuJeI7g=
+github.com/Meonardo/mediadevices v1.3.4/go.mod h1:uDOQgSqsmHFBva61It3nljy0uAy0/CU7u7pVjo0hYB8=
 github.com/aler9/gortsplib v0.0.0-20220303160144-a541ae8f963c h1:Khm1rmUPGe9z2fs/WujGrPDfV0TLqHYESWc/tIGax3E=
 github.com/aler9/gortsplib v0.0.0-20220303160144-a541ae8f963c/go.mod h1:mst8cTkmxLn8Osiug8HBjMsNFRt0u7QHt5phJQ1tFVw=
 github.com/asticode/go-astikit v0.20.0/go.mod h1:h4ly7idim1tNhaVkdVBeXQZEE3L0xblP7fCWbgwipF0=
