@@ -361,15 +361,14 @@ func (element *Muxer) Close() {
 	}
 
 	if element.pc != nil {
+		element.closeAudioDriverIfNecessary()
+
 		log.Println("Closing pc...")
 		err := element.pc.Close()
 		if err != nil {
 			log.Println("Close pc failed", err)
 		}
 		element.pc = nil
-
 		log.Println("Close pc finished")
-
-		element.closeAudioDriverIfNecessary()
 	}
 }
