@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/pion/mediadevices"
-	"github.com/pion/rtp"
 
 	"github.com/aler9/gortsplib"
 	"github.com/pion/dtls/v2/pkg/protocol/extension"
@@ -89,7 +88,6 @@ func NewMuxer(options Options) *Muxer {
 
 func (element *Muxer) NewPeerConnection(configuration webrtc.Configuration) (*webrtc.PeerConnection, error) {
 	if len(element.Options.ICEServers) > 0 {
-		log.Println("Set ICEServers", element.Options.ICEServers)
 		configuration.ICEServers = append(configuration.ICEServers, webrtc.ICEServer{
 			URLs:           element.Options.ICEServers,
 			Username:       element.Options.ICEUsername,
@@ -309,13 +307,13 @@ func (element *Muxer) WriteHeader(
 func (element *Muxer) connectRTSPCamera(rtsp string, track *webrtc.TrackLocalStaticRTP) {
 	go func() {
 		c := gortsplib.Client{
-			OnPacketRTP: func(trackID int, pkt *rtp.Packet) {
-				err := track.WriteRTP(pkt)
+			OnPacketRTP: func(p *gortsplib.ClientOnPacketRTPCtx) {
+				err := track.WriteRTP(p.Packet)
 				if err != nil {
 					fmt.Println("Write RTP pkt error: ", err)
 				}
 			}, Transport: func() *gortsplib.Transport {
-				v := gortsplib.TransportTCP
+				v := gortsplib.TransportUDP
 				return &v
 			}(),
 		}

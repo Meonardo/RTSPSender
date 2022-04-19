@@ -10,25 +10,41 @@ var Config = Configs{}
 
 //Configs struct
 type Configs struct {
-	mutex     sync.RWMutex
-	Clients   map[string]RTSPClient `json:"clients"`
-	LastError error
+	mutex   sync.RWMutex
+	Clients map[string]RTSPClient `json:"clients"`
+
+	isMicphoneRecording bool
+	LastError           error
 }
 
 type RTSPClient struct {
-	URL 			string `json:"url"`
-	ID 				string `json:"id"`
-	Room 			string `json:"room"`
-	Pin 			string `json:"pin"`
+	URL  string `json:"url"`
+	ID   string `json:"id"`
+	Room string `json:"room"`
+	Pin  string `json:"pin"`
 
-	Display      	string `json:"display"`
-	Mic          	string `json:"mic"`
-	Janus         	string   `json:"janus"`
-	ICEServers    	[]string `json:"ice_servers"`
-	ICEUsername   	string   `json:"ice_username"`
-	ICECredential 	string   `json:"ice_credential"`
+	Display       string   `json:"display"`
+	Mic           string   `json:"mic"`
+	Janus         string   `json:"janus"`
+	ICEServers    []string `json:"ice_servers"`
+	ICEUsername   string   `json:"ice_username"`
+	ICECredential string   `json:"ice_credential"`
 
-	WebRTC       *webrtc.Muxer
+	WebRTC *webrtc.Muxer
+}
+
+func (element *Configs) UpdateMicphoneRecordingState(state bool) {
+	element.mutex.Lock()
+	defer element.mutex.Unlock()
+
+	element.isMicphoneRecording = state
+}
+
+func (element *Configs) IsMicphoneRecording() bool {
+	element.mutex.Lock()
+	defer element.mutex.Unlock()
+
+	return element.isMicphoneRecording
 }
 
 func (element *Configs) AddClient(id string, client RTSPClient) bool {
