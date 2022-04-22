@@ -20,7 +20,7 @@ import (
 )
 
 const DEBUG = false
-const UsingCLI = true
+const UsingCLI = false
 
 func main() {
 	if DEBUG {
@@ -216,16 +216,26 @@ var iceServer = []string{
 	"turn:192.168.99.48:3478",
 }
 var testCameras = map[string]string{
-	"1": "rtsp://192.168.99.47/1",
-	"2": "rtsp://192.168.99.50/1",
+	"1":  "rtsp://192.168.99.83/1",
+	"2":  "rtsp://192.168.99.84/1",
+	"3":  "rtsp://192.168.99.89/1",
+	"4":  "rtsp://192.168.99.89/2",
+	"5":  "rtsp://192.168.99.84/2",
+	"6":  "rtsp://192.168.99.89/2",
+	"10": "rtsp://192.168.99.16/1",
+	"11": "rtsp://192.168.99.18/1",
+	"12": "rtsp://192.168.99.19/1",
+	"13": "rtsp://192.168.99.21/1",
 }
 var icePasswd = "123456"
 var iceUsername = "root"
 var room = "123456"
-var mic = "Internal Microphone (Cirrus Logic CS8409 (AB 57))"
+
+//"Internal Microphone (Cirrus Logic CS8409 (AB 57))"
+var mic = ""
 var janus = "ws://192.168.99.48:8188"
 
-var isPublishingTeacherStream = true
+var publishingUUID = "1"
 
 func testFromGinHTTP() {
 	go serveHTTP()
@@ -254,18 +264,17 @@ func testFromCLI() {
 		if text == "q" {
 			break
 		} else if text == "1" {
-			isPublishingTeacherStream = true
-			testUpdatePublishState()
+			testSwitch("1")
 		} else if text == "2" {
-			isPublishingTeacherStream = false
-			testUpdatePublishState()
+			testSwitch("2")
 		} else if text == "start" {
-			isPublishingTeacherStream = true
-			testStart("1")
+			testStart(publishingUUID)
 		} else if text == "stop" {
-			isPublishingTeacherStream = true
-			testStop("1")
-			testStop("2")
+			testStop(publishingUUID)
+		} else if text == "startAll" {
+			testStartAll()
+		} else if text == "stopAll" {
+			testStopAll()
 		}
 	}
 
@@ -277,12 +286,7 @@ func testFromCLI() {
 
 func testStart(uuid string) {
 	url := testCameras[uuid]
-	display := "Go" + fmt.Sprint(uuid) + "test"
-
-	if !isPublishingTeacherStream {
-		uuid = "2"
-		url = "rtsp://192.168.99.50/1"
-	}
+	display := url
 
 	client := config.RTSPClient{
 		URL:           url,
@@ -307,6 +311,15 @@ func testStart(uuid string) {
 	}
 }
 
+func testSwitch(uuid string) {
+	if publishingUUID == uuid {
+		return
+	}
+	testStop(publishingUUID)
+	testStart(uuid)
+	publishingUUID = uuid
+}
+
 func testStop(uuid string) {
 	if !config.Config.Exist(uuid) {
 		return
@@ -326,12 +339,14 @@ func testStop(uuid string) {
 	time.Sleep(100 * time.Millisecond)
 }
 
-func testUpdatePublishState() {
-	if isPublishingTeacherStream {
-		testStop("2")
-		testStart("1")
-	} else {
-		testStop("1")
-		testStart("2")
+func testStartAll() {
+	for uuid, _ := range testCameras {
+		testStart(uuid)
+	}
+}
+
+func testStopAll() {
+	for uuid, _ := range testCameras {
+		testStop(uuid)
 	}
 }

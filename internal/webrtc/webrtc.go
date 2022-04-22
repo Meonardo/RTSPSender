@@ -12,6 +12,7 @@ import (
 	"github.com/pion/mediadevices"
 
 	"github.com/aler9/gortsplib"
+	"github.com/aler9/gortsplib/pkg/base"
 	"github.com/pion/dtls/v2/pkg/protocol/extension"
 	"github.com/pion/interceptor"
 	"github.com/pion/webrtc/v3"
@@ -198,7 +199,11 @@ func (element *Muxer) WriteHeader(
 	}
 
 	// Connect to RTSP Camera
-	element.connectRTSPCamera(RTSP, videoTrack)
+	h264TrackID, err := element.h264trackID(RTSP)
+	if err != nil || h264TrackID == -1 {
+		return "Get H264 Track id error: ", err
+	}
+	element.connectRTSPCamera(RTSP, h264TrackID, videoTrack)
 
 	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
 		element.status = connectionState
@@ -304,22 +309,60 @@ func (element *Muxer) WriteHeader(
 	}
 }
 
-func (element *Muxer) connectRTSPCamera(rtsp string, track *webrtc.TrackLocalStaticRTP) {
+func (element *Muxer) h264trackID(rtsp string) (int, error) {
+	c := gortsplib.Client{}
+
+	defer c.Close()
+
+	// parse URL
+	u, err := base.ParseURL(rtsp)
+	if err != nil {
+		return -1, err
+	}
+
+	// connect to the server
+	err = c.Start(u.Scheme, u.Host)
+	if err != nil {
+		return -1, err
+	}
+
+	// find published tracks
+	tracks, _, _, err := c.Describe(u)
+	if err != nil {
+		return -1, err
+	}
+
+	// find the H264 track
+	h264TrackID, _ := func() (int, *gortsplib.TrackH264) {
+		for i, track := range tracks {
+			if h264track, ok := track.(*gortsplib.TrackH264); ok {
+				return i, h264track
+			}
+		}
+		return -1, nil
+	}()
+
+	return h264TrackID, nil
+}
+
+func (element *Muxer) connectRTSPCamera(rtsp string, h264TrackID int, track *webrtc.TrackLocalStaticRTP) {
 	go func() {
 		c := gortsplib.Client{
 			OnPacketRTP: func(p *gortsplib.ClientOnPacketRTPCtx) {
-				err := track.WriteRTP(p.Packet)
-				if err != nil {
-					fmt.Println("Write RTP pkt error: ", err)
+				if p.TrackID == h264TrackID {
+					err := track.WriteRTP(p.Packet)
+					if err != nil {
+						fmt.Println("Write RTP pkt error: ", err)
+					}
 				}
 			}, Transport: func() *gortsplib.Transport {
-				v := gortsplib.TransportUDP
+				v := gortsplib.TransportTCP
 				return &v
 			}(),
 		}
 		element.rtspClient = &c
 		err := c.StartReadingAndWait(rtsp)
-		log.Println("Connect to RTSP camera error", err)
+		log.Println("Connect to RTSP camera", err)
 	}()
 }
 
