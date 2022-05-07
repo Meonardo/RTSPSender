@@ -2,6 +2,8 @@ package config
 
 import (
 	"RTSPSender/internal/webrtc"
+	"crypto/md5"
+	"encoding/hex"
 	"sync"
 )
 
@@ -100,4 +102,9 @@ func (element *Configs) List() (string, []string) {
 		res = append(res, k)
 	}
 	return fist, res
+}
+
+func GetMD5Hash(text string) string {
+	hash := md5.Sum([]byte(text))
+	return hex.EncodeToString(hash[:])
 }

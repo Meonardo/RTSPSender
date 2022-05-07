@@ -2,6 +2,8 @@ package webrtc
 
 import (
 	"RTSPSender/internal/janus"
+	"crypto/md5"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -149,8 +151,8 @@ func (element *Muxer) WriteHeader(
 		deviceInfo := mediadevices.EnumerateDevices()
 		if len(deviceInfo) > 0 {
 			for _, device := range deviceInfo {
-				deviceName := strings.ReplaceAll(device.Name, " ", "")
-				if device.Kind == mediadevices.AudioInput && deviceName == Mic {
+				deviceName := getMD5Hash(device.Name)
+				if device.Kind == mediadevices.AudioInput && strings.EqualFold(deviceName, Mic) {
 					hasAudio = true
 					deviceID = device.DeviceID
 					log.Printf("Found Audio Device: %s, name: %s", device, device.Name)
@@ -412,4 +414,9 @@ func (element *Muxer) Close() {
 		element.pc = nil
 		log.Println("Close pc finished")
 	}
+}
+
+func getMD5Hash(text string) string {
+	hash := md5.Sum([]byte(text))
+	return hex.EncodeToString(hash[:])
 }

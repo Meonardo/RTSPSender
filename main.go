@@ -20,7 +20,7 @@ import (
 )
 
 const DEBUG = false
-const UsingCLI = false
+const UsingCLI = true
 
 func main() {
 	if DEBUG {
@@ -116,6 +116,11 @@ func StartPublishing(p *C.char) int {
 	if len(display) == 0 {
 		log.Println("Please input display name")
 		return -6
+	}
+
+	microphone := client.Mic
+	if len(microphone) > 0 {
+		client.Mic = config.GetMD5Hash(microphone)
 	}
 
 	defer func() {
@@ -216,23 +221,15 @@ var iceServer = []string{
 	"turn:192.168.99.48:3478",
 }
 var testCameras = map[string]string{
-	"1":  "rtsp://192.168.99.83/1",
-	"2":  "rtsp://192.168.99.84/1",
-	"3":  "rtsp://192.168.99.89/1",
-	"4":  "rtsp://192.168.99.89/2",
-	"5":  "rtsp://192.168.99.84/2",
-	"6":  "rtsp://192.168.99.89/2",
-	"10": "rtsp://192.168.99.16/1",
-	"11": "rtsp://192.168.99.18/1",
-	"12": "rtsp://192.168.99.19/1",
-	"13": "rtsp://192.168.99.21/1",
+	"1": "rtsp://192.168.99.47/1",
+	"2": "rtsp://192.168.99.50/1",
 }
 var icePasswd = "123456"
 var iceUsername = "root"
 var room = "123456"
 
 //"Internal Microphone (Cirrus Logic CS8409 (AB 57))"
-var mic = ""
+var mic = "Internal Microphone (Cirrus Logic CS8409 (AB 57))"
 var janus = "ws://192.168.99.48:8188"
 
 var publishingUUID = "1"
@@ -299,6 +296,10 @@ func testStart(uuid string) {
 		ICEServers:    iceServer,
 		ICEUsername:   iceUsername,
 		ICECredential: icePasswd,
+	}
+
+	if len(client.Mic) > 0 {
+		client.Mic = config.GetMD5Hash(client.Mic)
 	}
 
 	if !config.Config.AddClient(uuid, client) {

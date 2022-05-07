@@ -68,7 +68,10 @@ func Start(c *gin.Context) {
 		return
 	}
 
-	// mic := client.Mic
+	mic := client.Mic
+	if len(mic) > 0 {
+		client.Mic = config.GetMD5Hash(mic)
+	}
 	// if runtime.GOOS == "windows" && len(mic) > 0 {
 	// 	micID := config.MicGUIDFromName(mic)
 	// 	if len(micID) == 0 {
