@@ -157,10 +157,15 @@ func (element *Muxer) WriteHeader(
 					deviceID = device.DeviceID
 					log.Printf("Found Audio Device: %s, name: %s", device, device.Name)
 					break
+				} else {
+					hasAudio = false
 				}
 			}
 		} else {
 			hasAudio = false
+		}
+
+		if !hasAudio {
 			log.Println("No microphone device found in this machine, not going to send audio...")
 		}
 	}

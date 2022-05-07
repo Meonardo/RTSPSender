@@ -118,11 +118,6 @@ func StartPublishing(p *C.char) int {
 		return -6
 	}
 
-	microphone := client.Mic
-	if len(microphone) > 0 {
-		client.Mic = config.GetMD5Hash(microphone)
-	}
-
 	defer func() {
 		if !startedSuccess {
 			config.Config.DelClient(uuid)
@@ -229,7 +224,7 @@ var iceUsername = "root"
 var room = "123456"
 
 //"Internal Microphone (Cirrus Logic CS8409 (AB 57))"
-var mic = "Internal Microphone (Cirrus Logic CS8409 (AB 57))"
+var mic = "Microphone (Realtek(R) Audio)"
 var janus = "ws://192.168.99.48:8188"
 
 var publishingUUID = "1"
