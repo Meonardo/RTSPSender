@@ -16,6 +16,7 @@ import (
 import (
 	"bufio"
 	"os/signal"
+	"regexp"
 	"syscall"
 )
 
@@ -91,9 +92,10 @@ func StartPublishing(p *C.char) int {
 	}
 
 	rtsp := client.URL
-	if len(rtsp) == 0 {
-		log.Println("Please input RTSP camera URL!")
-		return -8
+	var validURL = regexp.MustCompile(config.RTSPReg)
+	if !validURL.MatchString(rtsp) {
+		log.Println("Please input validate RTSP camera URL!")
+		return -9
 	}
 
 	room := client.Room
@@ -126,7 +128,7 @@ func StartPublishing(p *C.char) int {
 
 	if !config.Config.AddClient(uuid, client) {
 		log.Printf("Camera(%s) add failed!", id)
-		return -8
+		return -11
 	}
 
 	msg, err := Stream2WebRTC(uuid)
@@ -138,7 +140,7 @@ func StartPublishing(p *C.char) int {
 			msg += ", " + err.Error()
 		}
 		log.Println(msg)
-		return -9
+		return -12
 	}
 
 	startedSuccess = true
@@ -216,8 +218,8 @@ var iceServer = []string{
 	"turn:192.168.99.48:3478",
 }
 var testCameras = map[string]string{
-	"1": "rtsp://192.168.99.47/1",
-	"2": "rtsp://192.168.99.50/1",
+	"1": "rtsps://192.168.99.47/1",
+	"2": "rtsps://192.168.99.50/1",
 }
 var icePasswd = "123456"
 var iceUsername = "root"
@@ -278,6 +280,12 @@ func testFromCLI() {
 
 func testStart(uuid string) {
 	url := testCameras[uuid]
+	var validURL = regexp.MustCompile(config.RTSPReg)
+	if !validURL.MatchString(url) {
+		log.Println("Please input validate RTSP camera URL!")
+		return
+	}
+
 	display := url
 
 	client := config.RTSPClient{
