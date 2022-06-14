@@ -11,10 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aler9/gortsplib/pkg/url"
+
 	"github.com/pion/mediadevices"
 
 	"github.com/aler9/gortsplib"
-	"github.com/aler9/gortsplib/pkg/base"
 	"github.com/pion/dtls/v2/pkg/protocol/extension"
 	"github.com/pion/interceptor"
 	"github.com/pion/webrtc/v3"
@@ -64,7 +65,7 @@ func (element *Muxer) janusEventsHandle(handle *janus.Handle) {
 						element.stopSendingAudio = true
 						time.AfterFunc(3*time.Second, func() {
 							if element.stopSendingAudio {
-								log.Println("No audio in 3s, closinng audio driver...")
+								log.Println("No audio in 3s, closing audio driver...")
 								element.closeAudioDriverIfNecessary()
 							}
 						})
@@ -79,7 +80,7 @@ func (element *Muxer) janusEventsHandle(handle *janus.Handle) {
 		case *janus.HangupMsg:
 			log.Println("HangupEvent type", handle.User)
 		case *janus.EventMsg:
-			log.Printf("EventMsg %+v", msg.Plugindata.Data)
+			// log.Printf("EventMsg %+v", msg.Plugindata.Data)
 		}
 	}
 }
@@ -102,6 +103,24 @@ func (element *Muxer) NewPeerConnection(configuration webrtc.Configuration) (*we
 	if err := m.RegisterDefaultCodecs(); err != nil {
 		return nil, err
 	}
+
+	videoRTCPFeedback := []webrtc.RTCPFeedback{
+		{Type: "goog-remb", Parameter: ""},
+		{Type: "ccm", Parameter: "fir"},
+		{Type: "nack", Parameter: ""},
+		{Type: "nack", Parameter: "pli"},
+	}
+	for _, codec := range []webrtc.RTPCodecParameters{
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH265, ClockRate: 90000, Channels: 0, SDPFmtpLine: "profile-id=1", RTCPFeedback: videoRTCPFeedback},
+			PayloadType:        96,
+		},
+	} {
+		if err := m.RegisterCodec(codec, webrtc.RTPCodecTypeVideo); err != nil {
+			return nil, err
+		}
+	}
+
 	i := &interceptor.Registry{}
 	if err := webrtc.RegisterDefaultInterceptors(m, i); err != nil {
 		return nil, err
@@ -171,10 +190,12 @@ func (element *Muxer) WriteHeader(
 	}
 
 	if hasAudio && element.audioCodecSelector != nil {
+		// Filter audio(microphone) device id by name
 		s, err := mediadevices.GetUserMedia(mediadevices.MediaStreamConstraints{
 			Audio: func(c *mediadevices.MediaTrackConstraints) {
 				c.DeviceID = prop.String(deviceID)
-				c.SampleSize = prop.Int(2)
+				// c.SampleSize = prop.Int(2)
+				// c.SampleRate = prop.Int(32000)
 			},
 			Codec: element.audioCodecSelector,
 		})
@@ -196,9 +217,14 @@ func (element *Muxer) WriteHeader(
 		}
 	}
 
+	// Get video track info from RTSP URL
+	videoTrackID, videoType, err := element.videoTrackID(RTSP)
+	if err != nil || videoTrackID == -1 {
+		return "Get video Track id error: ", err
+	}
+
 	// Create a video track
-	videoTrack, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264}, "video", "rtsp")
-	//webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264}, "video", "rtsp")
+	videoTrack, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: videoType}, "video", "rtsp")
 	if err != nil {
 		return "Create video track failed", err
 	} else if _, err = peerConnection.AddTrack(videoTrack); err != nil {
@@ -206,11 +232,7 @@ func (element *Muxer) WriteHeader(
 	}
 
 	// Connect to RTSP Camera
-	h264TrackID, err := element.h264trackID(RTSP)
-	if err != nil || h264TrackID == -1 {
-		return "Get H264 Track id error: ", err
-	}
-	element.connectRTSPCamera(RTSP, h264TrackID, videoTrack)
+	element.connectRTSPCamera(RTSP, videoTrackID, videoTrack)
 
 	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
 		element.status = connectionState
@@ -316,40 +338,46 @@ func (element *Muxer) WriteHeader(
 	}
 }
 
-func (element *Muxer) h264trackID(rtsp string) (int, error) {
+func (element *Muxer) videoTrackID(rtsp string) (int, string, error) {
 	c := gortsplib.Client{}
 
 	defer c.Close()
 
+	videoCodeType := webrtc.MimeTypeH264
+
 	// parse URL
-	u, err := base.ParseURL(rtsp)
+	u, err := url.Parse(rtsp)
 	if err != nil {
-		return -1, err
+		return -1, videoCodeType, err
 	}
 
 	// connect to the server
 	err = c.Start(u.Scheme, u.Host)
 	if err != nil {
-		return -1, err
+		return -1, videoCodeType, err
 	}
 
 	// find published tracks
 	tracks, _, _, err := c.Describe(u)
 	if err != nil {
-		return -1, err
+		return -1, videoCodeType, err
 	}
 
-	// find the H264 track
-	h264TrackID, _ := func() (int, *gortsplib.TrackH264) {
-		for i, track := range tracks {
-			if h264track, ok := track.(*gortsplib.TrackH264); ok {
-				return i, h264track
+	for i, track := range tracks {
+		trackName := track.MediaDescription().MediaName.Media
+		if trackName == "video" {
+			// find the video track h264 or h265
+			attributes := track.MediaDescription().Attributes
+			for _, attr := range attributes {
+				if strings.Contains(attr.Value, "265") {
+					videoCodeType = webrtc.MimeTypeH265
+					break
+				}
 			}
+			return i, videoCodeType, nil
 		}
-		return -1, nil
-	}()
-
-	return h264TrackID, nil
+	}
+	return -1, videoCodeType, nil
 }
 
 func (element *Muxer) connectRTSPCamera(rtsp string, h264TrackID int, track *webrtc.TrackLocalStaticRTP) {

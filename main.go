@@ -20,8 +20,8 @@ import (
 	"syscall"
 )
 
-const DEBUG = false
-const UsingCLI = true
+const DEBUG = true
+const UsingCLI = false
 
 func main() {
 	if DEBUG {
@@ -218,8 +218,10 @@ var iceServer = []string{
 	"turn:192.168.99.48:3478",
 }
 var testCameras = map[string]string{
-	"1": "rtsps://192.168.99.47/1",
-	"2": "rtsps://192.168.99.50/1",
+	"1": "rtsp://192.168.99.47/1",
+	"2": "rtsp://192.168.99.50/1",
+	// "3": "rtsp://192.168.99.16/1",
+	// "4": "rtsp://192.168.99.18/1",
 }
 var icePasswd = "123456"
 var iceUsername = "root"
