@@ -33,6 +33,7 @@ type Muxer struct {
 	rtspClient         *gortsplib.Client
 	audioCodecSelector *mediadevices.CodecSelector
 	stopSendingAudio   bool
+	rtspRetryTimes     int
 
 	Options Options
 	Janus   *janus.Gateway
@@ -73,6 +74,10 @@ func (element *Muxer) janusEventsHandle(handle *janus.Handle) {
 				} else {
 					element.stopSendingAudio = false
 				}
+			} else if msg.Type == "video" {
+				if msg.Receiving {
+					element.rtspRetryTimes = 3
+				}
 			}
 			log.Println("MediaEvent type", msg.Type, "receiving", msg.Receiving, "user:", handle.User)
 		case *janus.WebRTCUpMsg:
@@ -87,6 +92,7 @@ func (element *Muxer) janusEventsHandle(handle *janus.Handle) {
 
 func NewMuxer(options Options) *Muxer {
 	tmp := Muxer{Options: options}
+	tmp.rtspRetryTimes = 3
 	return &tmp
 }
 
@@ -367,27 +373,28 @@ func (element *Muxer) videoTrackID(rtsp string) (int, string, error) {
 		trackName := track.MediaDescription().MediaName.Media
 		if trackName == "video" {
 			// find the video track h264 or h265
-			attributes := track.MediaDescription().Attributes
-			for _, attr := range attributes {
-				if strings.Contains(attr.Value, "265") {
-					videoCodeType = webrtc.MimeTypeH265
-					break
-				}
+			if _, ok := track.(*gortsplib.TrackH264); ok {
+				videoCodeType = webrtc.MimeTypeH264
+				return i, videoCodeType, nil
+			} else if _, ok := track.(*gortsplib.TrackH265); ok {
+				videoCodeType = webrtc.MimeTypeH265
+				return i, videoCodeType, nil
 			}
-			return i, videoCodeType, nil
 		}
 	}
 	return -1, videoCodeType, nil
 }
 
-func (element *Muxer) connectRTSPCamera(rtsp string, h264TrackID int, track *webrtc.TrackLocalStaticRTP) {
+func (element *Muxer) connectRTSPCamera(rtsp string, videoTrackId int, track *webrtc.TrackLocalStaticRTP) {
+	element.rtspClient = nil
+
 	go func() {
 		c := gortsplib.Client{
 			OnPacketRTP: func(p *gortsplib.ClientOnPacketRTPCtx) {
-				if p.TrackID == h264TrackID {
+				if p.TrackID == videoTrackId {
 					err := track.WriteRTP(p.Packet)
 					if err != nil {
-						fmt.Println("Write RTP pkt error: ", err)
+						fmt.Println("Write RTP pkt error:", err)
 					}
 				}
 			}, Transport: func() *gortsplib.Transport {
@@ -395,9 +402,27 @@ func (element *Muxer) connectRTSPCamera(rtsp string, h264TrackID int, track *web
 				return &v
 			}(),
 		}
+		// c.ReadTimeout = 5
+		c.UserAgent = "RTSPSender"
 		element.rtspClient = &c
 		err := c.StartReadingAndWait(rtsp)
-		log.Println("Connect to RTSP camera", err)
+
+		if err != nil {
+			log.Println("Connect to RTSP camera error:", err)
+			// retry
+			if element.rtspRetryTimes > 0 && !element.stop {
+				element.rtspRetryTimes--
+				time.AfterFunc(1*time.Second, func() {
+					if !element.stop {
+						log.Println("Reconnect to RTSP", rtsp)
+						element.connectRTSPCamera(rtsp, videoTrackId, track)
+					}
+				})
+			} else {
+				log.Printf("Reconnect to RTSP %s failed, close WebRTC", rtsp)
+				element.Close()
+			}
+		}
 	}()
 }
 
@@ -410,7 +435,7 @@ func (element *Muxer) closeAudioDriverIfNecessary() {
 			if err != nil {
 				log.Println("Close driver failed", err)
 			}
-			log.Println("Close microphone finished")
+			log.Println("Close microphone finished.")
 		}
 	}
 }

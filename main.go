@@ -21,7 +21,7 @@ import (
 )
 
 const DEBUG = true
-const UsingCLI = false
+const UsingCLI = true
 
 func main() {
 	if DEBUG {
@@ -55,7 +55,7 @@ func makeConfig() {
 				log.Fatalln(err)
 			}
 		}
-		LOG_FILE := logPath + fmt.Sprintf("\\%d", time.Now().Unix())
+		LOG_FILE := logPath + fmt.Sprintf("\\%d", time.Now().Unix()) + ".log"
 		logFile, err := os.OpenFile(LOG_FILE, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
 		if err != nil {
 			log.Fatalln(err)
@@ -63,7 +63,7 @@ func makeConfig() {
 
 		log.SetOutput(logFile)
 		// optional: log date-time, filename, and line number
-		log.SetFlags(log.Lshortfile | log.LstdFlags)
+		// log.SetFlags()
 		log.Println("Service starting...")
 	}
 }
@@ -77,7 +77,7 @@ func StartPublishing(p *C.char) int {
 
 	c := strings.Fields(C.GoString(p))
 	configs := strings.Join(c, "")
-	log.Printf("Configs = %s", configs)
+	log.Printf("StartPublishing..., Configs = %s", configs)
 
 	if len(configs) == 0 {
 		log.Println("Missing mandatory field `configs`!")
@@ -218,8 +218,8 @@ var iceServer = []string{
 	"turn:192.168.99.48:3478",
 }
 var testCameras = map[string]string{
-	"1": "rtsp://192.168.99.47/1",
-	"2": "rtsp://192.168.99.50/1",
+	// "6": "rtsp://192.168.99.47/1",
+	"8": "rtsp://192.168.99.50/1",
 	// "3": "rtsp://192.168.99.16/1",
 	// "4": "rtsp://192.168.99.18/1",
 }
@@ -228,7 +228,7 @@ var iceUsername = "root"
 var room = "123456"
 
 //"Internal Microphone (Cirrus Logic CS8409 (AB 57))"
-var mic = "Microphone (Realtek(R) Audio)"
+var mic = "Microphone (Realtek High Definition Audio)"
 var janus = "ws://192.168.99.48:8188"
 
 var publishingUUID = "1"
