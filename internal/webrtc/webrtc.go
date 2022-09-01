@@ -224,8 +224,9 @@ func (element *Muxer) WriteHeader(
 	}
 
 	// Get video track info from RTSP URL
-	videoTrackID, videoType, err := element.videoTrackID(RTSP)
-	if err != nil || videoTrackID == -1 {
+	rtspVideoTrack, videoType, err := element.videoTrackID(RTSP)
+	if err != nil || rtspVideoTrack == nil {
+		element.rtspClient.Close()
 		return "Get video Track id error: ", err
 	}
 
@@ -238,7 +239,7 @@ func (element *Muxer) WriteHeader(
 	}
 
 	// Connect to RTSP Camera
-	element.connectRTSPCamera(RTSP, videoTrackID, videoTrack)
+	element.connectRTSPCamera(RTSP, rtspVideoTrack, videoTrack)
 
 	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
 		element.status = connectionState
@@ -344,68 +345,75 @@ func (element *Muxer) WriteHeader(
 	}
 }
 
-func (element *Muxer) videoTrackID(rtsp string) (int, string, error) {
-	c := gortsplib.Client{}
+func (element *Muxer) videoTrackID(rtsp string) (gortsplib.Track, string, error) {
+	c := gortsplib.Client{
+		UserAgent: "RTSPSender",
+		// ReadTimeout: 8,
+	}
 
-	defer c.Close()
+	element.rtspClient = &c
 
 	videoCodeType := webrtc.MimeTypeH264
 
 	// parse URL
 	u, err := url.Parse(rtsp)
 	if err != nil {
-		return -1, videoCodeType, err
+		return nil, videoCodeType, err
 	}
 
 	// connect to the server
 	err = c.Start(u.Scheme, u.Host)
 	if err != nil {
-		return -1, videoCodeType, err
+		return nil, videoCodeType, err
 	}
 
 	// find published tracks
 	tracks, _, _, err := c.Describe(u)
 	if err != nil {
-		return -1, videoCodeType, err
+		return nil, videoCodeType, err
 	}
 
+	trackIndex := -1
 	for i, track := range tracks {
-		trackName := track.MediaDescription().MediaName.Media
-		if trackName == "video" {
-			// find the video track h264 or h265
-			if _, ok := track.(*gortsplib.TrackH264); ok {
-				videoCodeType = webrtc.MimeTypeH264
-				return i, videoCodeType, nil
-			} else if _, ok := track.(*gortsplib.TrackH265); ok {
-				videoCodeType = webrtc.MimeTypeH265
-				return i, videoCodeType, nil
-			}
+		// find the video track h264 or h265
+		if _, ok := track.(*gortsplib.TrackH264); ok {
+			videoCodeType = webrtc.MimeTypeH264
+			trackIndex = i
+			break
+		} else if _, ok := track.(*gortsplib.TrackH265); ok {
+			videoCodeType = webrtc.MimeTypeH265
+			trackIndex = i
+			break
 		}
 	}
-	return -1, videoCodeType, nil
+
+	if trackIndex < 0 {
+		fmt.Println("Can not find video track, rtsp=", rtsp)
+		return nil, videoCodeType, err
+	}
+
+	return tracks[trackIndex], videoCodeType, nil
 }
 
-func (element *Muxer) connectRTSPCamera(rtsp string, videoTrackId int, track *webrtc.TrackLocalStaticRTP) {
-	element.rtspClient = nil
+func (element *Muxer) connectRTSPCamera(rtsp string, videoTrack gortsplib.Track, track *webrtc.TrackLocalStaticRTP) {
+	// parse URL
+	baseURL, err := url.Parse(rtsp)
+	if err != nil {
+		log.Print("Parse URL error:", err)
+		return
+	}
 
 	go func() {
-		c := gortsplib.Client{
-			OnPacketRTP: func(p *gortsplib.ClientOnPacketRTPCtx) {
-				if p.TrackID == videoTrackId {
-					err := track.WriteRTP(p.Packet)
-					if err != nil {
-						fmt.Println("Write RTP pkt error:", err)
-					}
-				}
-			}, Transport: func() *gortsplib.Transport {
-				v := gortsplib.TransportTCP
-				return &v
-			}(),
+		element.rtspClient.OnPacketRTP = func(p *gortsplib.ClientOnPacketRTPCtx) {
+			err := track.WriteRTP(p.Packet)
+			if err != nil {
+				fmt.Println("Write RTP pkt error:", err)
+			}
 		}
-		// c.ReadTimeout = 5
-		c.UserAgent = "RTSPSender"
-		element.rtspClient = &c
-		err := c.StartReadingAndWait(rtsp)
+
+		_, err = element.rtspClient.Setup(true, videoTrack, baseURL, 0, 0)
+		_, err = element.rtspClient.Play(nil)
+		err = element.rtspClient.Wait()
 
 		if err != nil {
 			log.Println("Connect to RTSP camera error:", err)
@@ -415,7 +423,7 @@ func (element *Muxer) connectRTSPCamera(rtsp string, videoTrackId int, track *we
 				time.AfterFunc(1*time.Second, func() {
 					if !element.stop {
 						log.Println("Reconnect to RTSP", rtsp)
-						element.connectRTSPCamera(rtsp, videoTrackId, track)
+						element.connectRTSPCamera(rtsp, videoTrack, track)
 					}
 				})
 			} else {
