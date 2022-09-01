@@ -52,4 +52,4 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
 
-replace github.com/pion/mediadevices v0.3.11 => github.com/Meonardo/mediadevices v1.3.4
+replace github.com/pion/mediadevices => github.com/Meonardo/mediadevices v1.3.6-0.20220901074052-590747f38cc0
