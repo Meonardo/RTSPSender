@@ -228,7 +228,7 @@ var iceUsername = "root"
 var room = "123456"
 
 //"Internal Microphone (Cirrus Logic CS8409 (AB 57))"
-var mic = "Microphone (Realtek High Definition Audio)"
+var mic = "Microphone Array (Realtek(R) Audio)"
 var janus = "ws://192.168.99.48:8188"
 
 var publishingUUID = "1"
