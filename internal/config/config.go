@@ -16,14 +16,13 @@ const RTSPReg = `(rtsp):\/\/((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5
 //Configs struct
 type Configs struct {
 	mutex   sync.RWMutex
-	Clients map[string]RTSPClient `json:"clients"`
+	Client  *Client
+	Clients map[string]Client `json:"clients"`
 
-	isMicphoneRecording bool
-	LastError           error
+	LastError error
 }
 
-type RTSPClient struct {
-	URL  string `json:"url"`
+type Client struct {
 	ID   string `json:"id"`
 	Room string `json:"room"`
 	Pin  string `json:"pin"`
@@ -38,21 +37,7 @@ type RTSPClient struct {
 	WebRTC *webrtc.Muxer
 }
 
-func (element *Configs) UpdateMicphoneRecordingState(state bool) {
-	element.mutex.Lock()
-	defer element.mutex.Unlock()
-
-	element.isMicphoneRecording = state
-}
-
-func (element *Configs) IsMicphoneRecording() bool {
-	element.mutex.Lock()
-	defer element.mutex.Unlock()
-
-	return element.isMicphoneRecording
-}
-
-func (element *Configs) AddClient(id string, client RTSPClient) bool {
+func (element *Configs) AddClient(id string, client Client) bool {
 	element.mutex.Lock()
 	defer element.mutex.Unlock()
 

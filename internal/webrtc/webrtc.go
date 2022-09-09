@@ -11,11 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aler9/gortsplib/pkg/url"
-
 	"github.com/pion/mediadevices"
 
-	"github.com/aler9/gortsplib"
 	"github.com/pion/dtls/v2/pkg/protocol/extension"
 	"github.com/pion/interceptor"
 	"github.com/pion/webrtc/v3"
@@ -30,10 +27,8 @@ type Muxer struct {
 	status             webrtc.ICEConnectionState
 	stop               bool
 	pc                 *webrtc.PeerConnection
-	rtspClient         *gortsplib.Client
 	audioCodecSelector *mediadevices.CodecSelector
 	stopSendingAudio   bool
-	rtspRetryTimes     int
 
 	Options Options
 	Janus   *janus.Gateway
@@ -52,47 +47,8 @@ type Options struct {
 	PortMax uint16
 }
 
-func (element *Muxer) janusEventsHandle(handle *janus.Handle) {
-	// wait for event
-	for {
-		msg := <-handle.Events
-		switch msg := msg.(type) {
-		case *janus.SlowLinkMsg:
-			log.Println("SlowLinkMsg type, user:", handle.User)
-		case *janus.MediaMsg:
-			if msg.Type == "audio" {
-				if !msg.Receiving {
-					if !element.stopSendingAudio {
-						element.stopSendingAudio = true
-						time.AfterFunc(3*time.Second, func() {
-							if element.stopSendingAudio {
-								log.Println("No audio in 3s, closing audio driver...")
-								element.closeAudioDriverIfNecessary()
-							}
-						})
-					}
-				} else {
-					element.stopSendingAudio = false
-				}
-			} else if msg.Type == "video" {
-				if msg.Receiving {
-					element.rtspRetryTimes = 3
-				}
-			}
-			log.Println("MediaEvent type", msg.Type, "receiving", msg.Receiving, "user:", handle.User)
-		case *janus.WebRTCUpMsg:
-			log.Println("WebRTCUpMsg type, user:", handle.User)
-		case *janus.HangupMsg:
-			log.Println("HangupEvent type", handle.User)
-		case *janus.EventMsg:
-			// log.Printf("EventMsg %+v", msg.Plugindata.Data)
-		}
-	}
-}
-
 func NewMuxer(options Options) *Muxer {
 	tmp := Muxer{Options: options}
-	tmp.rtspRetryTimes = 3
 	return &tmp
 }
 
@@ -158,11 +114,9 @@ func (element *Muxer) WriteHeader(
 	ID string,
 	Room string,
 	Pin string,
-	RTSP string,
 	Janus string,
 	Mic string,
 	Display string) (string, error) {
-
 	peerConnection, err := element.NewPeerConnection(webrtc.Configuration{
 		SDPSemantics: webrtc.SDPSemanticsUnifiedPlanWithFallback,
 	})
@@ -191,7 +145,7 @@ func (element *Muxer) WriteHeader(
 		}
 
 		if !hasAudio {
-			log.Println("No microphone device found in this machine, not going to send audio...")
+			return "No microphone device found in this machine", nil
 		}
 	}
 
@@ -200,8 +154,10 @@ func (element *Muxer) WriteHeader(
 		s, err := mediadevices.GetUserMedia(mediadevices.MediaStreamConstraints{
 			Audio: func(c *mediadevices.MediaTrackConstraints) {
 				c.DeviceID = prop.String(deviceID)
-				// c.SampleSize = prop.Int(2)
-				// c.SampleRate = prop.Int(32000)
+				c.SampleSize = prop.Int(2)
+				c.SampleRate = prop.Int(48000)
+				c.IsFloat = prop.BoolExact(true)
+				c.IsInterleaved = prop.BoolExact(true)
 			},
 			Codec: element.audioCodecSelector,
 		})
@@ -223,24 +179,6 @@ func (element *Muxer) WriteHeader(
 		}
 	}
 
-	// Get video track info from RTSP URL
-	rtspVideoTrack, videoType, err := element.videoTrackID(RTSP)
-	if err != nil || rtspVideoTrack == nil {
-		element.rtspClient.Close()
-		return "Get video Track id error: ", err
-	}
-
-	// Create a video track
-	videoTrack, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: videoType}, "video", "rtsp")
-	if err != nil {
-		return "Create video track failed", err
-	} else if _, err = peerConnection.AddTrack(videoTrack); err != nil {
-		return "Add video track failed", err
-	}
-
-	// Connect to RTSP Camera
-	element.connectRTSPCamera(RTSP, rtspVideoTrack, videoTrack)
-
 	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
 		element.status = connectionState
 	})
@@ -259,11 +197,23 @@ func (element *Muxer) WriteHeader(
 	waitT := time.NewTimer(time.Second * 10)
 	select {
 	case <-waitT.C:
-		return "", errors.New("gatherCompletePromise wait")
+		return "", errors.New("GatherCompletePromise wait")
 	case <-gatherCompletePromise:
 		//Connected
+		break
 	}
 
+	// Connect to janus, set remote sdp.
+	return element.connectJanusAndSendMsgs(ID, Room, Pin, Janus, Display, peerConnection)
+}
+
+// Connect to Janus server & join the video room
+func (element *Muxer) connectJanusAndSendMsgs(
+	ID string,
+	Room string,
+	Pin string,
+	Janus string,
+	Display string, pc *webrtc.PeerConnection) (string, error) {
 	// Janus
 	gateway, err := janus.Connect(Janus)
 	if err != nil {
@@ -296,7 +246,7 @@ func (element *Muxer) WriteHeader(
 
 	go element.janusEventsHandle(handle)
 
-	roomNum, err := strconv.Atoi(Room)
+	roomNum, _ := strconv.Atoi(Room)
 	publisherID, err := strconv.Atoi(ID)
 	if err != nil {
 		roomNum = 1234
@@ -318,20 +268,21 @@ func (element *Muxer) WriteHeader(
 
 	msg, err := handle.Message(map[string]interface{}{
 		"request": "publish",
-		"audio":   hasAudio,
-		"video":   true,
+		"audio":   true,
+		"video":   false,
 		"data":    false,
 	}, map[string]interface{}{
 		"type":    "offer",
-		"sdp":     peerConnection.LocalDescription().SDP,
+		"sdp":     pc.LocalDescription().SDP,
 		"trickle": false,
 	})
 	if err != nil {
 		return fmt.Sprintf("Publish to room %s failed", Room), err
 	}
 
+	// set remote sdp
 	if msg.Jsep != nil {
-		err = peerConnection.SetRemoteDescription(webrtc.SessionDescription{
+		err = pc.SetRemoteDescription(webrtc.SessionDescription{
 			Type: webrtc.SDPTypeAnswer,
 			SDP:  msg.Jsep["sdp"].(string),
 		})
@@ -342,109 +293,6 @@ func (element *Muxer) WriteHeader(
 		return "", nil
 	} else {
 		return fmt.Sprintf("No JSEP found %s error", Room), err
-	}
-}
-
-func (element *Muxer) videoTrackID(rtsp string) (gortsplib.Track, string, error) {
-	c := gortsplib.Client{
-		UserAgent: "RTSPSender",
-		// ReadTimeout: 8,
-	}
-
-	element.rtspClient = &c
-
-	videoCodeType := webrtc.MimeTypeH264
-
-	// parse URL
-	u, err := url.Parse(rtsp)
-	if err != nil {
-		return nil, videoCodeType, err
-	}
-
-	// connect to the server
-	err = c.Start(u.Scheme, u.Host)
-	if err != nil {
-		return nil, videoCodeType, err
-	}
-
-	// find published tracks
-	tracks, _, _, err := c.Describe(u)
-	if err != nil {
-		return nil, videoCodeType, err
-	}
-
-	trackIndex := -1
-	for i, track := range tracks {
-		// find the video track h264 or h265
-		if _, ok := track.(*gortsplib.TrackH264); ok {
-			videoCodeType = webrtc.MimeTypeH264
-			trackIndex = i
-			break
-		} else if _, ok := track.(*gortsplib.TrackH265); ok {
-			videoCodeType = webrtc.MimeTypeH265
-			trackIndex = i
-			break
-		}
-	}
-
-	if trackIndex < 0 {
-		fmt.Println("Can not find video track, rtsp=", rtsp)
-		return nil, videoCodeType, err
-	}
-
-	return tracks[trackIndex], videoCodeType, nil
-}
-
-func (element *Muxer) connectRTSPCamera(rtsp string, videoTrack gortsplib.Track, track *webrtc.TrackLocalStaticRTP) {
-	// parse URL
-	baseURL, err := url.Parse(rtsp)
-	if err != nil {
-		log.Print("Parse URL error:", err)
-		return
-	}
-
-	go func() {
-		element.rtspClient.OnPacketRTP = func(p *gortsplib.ClientOnPacketRTPCtx) {
-			err := track.WriteRTP(p.Packet)
-			if err != nil {
-				fmt.Println("Write RTP pkt error:", err)
-			}
-		}
-
-		_, err = element.rtspClient.Setup(true, videoTrack, baseURL, 0, 0)
-		_, err = element.rtspClient.Play(nil)
-		err = element.rtspClient.Wait()
-
-		if err != nil {
-			log.Println("Connect to RTSP camera error:", err)
-			// retry
-			if element.rtspRetryTimes > 0 && !element.stop {
-				element.rtspRetryTimes--
-				time.AfterFunc(1*time.Second, func() {
-					if !element.stop {
-						log.Println("Reconnect to RTSP", rtsp)
-						element.connectRTSPCamera(rtsp, videoTrack, track)
-					}
-				})
-			} else {
-				log.Printf("Reconnect to RTSP %s failed, close WebRTC", rtsp)
-				element.Close()
-			}
-		}
-	}()
-}
-
-func (element *Muxer) closeAudioDriverIfNecessary() {
-	audioDrivers := driver.GetManager().Query(driver.FilterAudioRecorder())
-	for _, d := range audioDrivers {
-		if d.Status() != driver.StateOpened {
-			log.Println("Closing microphone...")
-			err := d.Close()
-			if err != nil {
-				log.Println("Close driver failed", err)
-			}
-			log.Println("Close microphone finished.")
-		}
 	}
 }
 
@@ -463,12 +311,6 @@ func (element *Muxer) Close() {
 		element.Janus = nil
 	}
 
-	if element.rtspClient != nil {
-		err := element.rtspClient.Close()
-		log.Println("Close RTSP client failed", err)
-		element.rtspClient = nil
-	}
-
 	if element.pc != nil {
 		element.closeAudioDriverIfNecessary()
 
@@ -479,6 +321,76 @@ func (element *Muxer) Close() {
 		}
 		element.pc = nil
 		log.Println("Close pc finished")
+	}
+}
+
+func (element *Muxer) StartMixingSounds() bool {
+	audioDrivers := driver.GetManager().Query(driver.FilterAudioRecorder())
+	for _, d := range audioDrivers {
+		if d.Status() != driver.StateOpened {
+			log.Println("Mixing sounds.")
+			return d.StartMixing()
+		}
+	}
+	return false
+}
+
+func (element *Muxer) StopMixingSounds() bool {
+	audioDrivers := driver.GetManager().Query(driver.FilterAudioRecorder())
+	for _, d := range audioDrivers {
+		if d.Status() != driver.StateOpened {
+			log.Println("Mixing sounds stopped.")
+			return d.StopMixing()
+		}
+	}
+	return false
+}
+
+func (element *Muxer) closeAudioDriverIfNecessary() {
+	audioDrivers := driver.GetManager().Query(driver.FilterAudioRecorder())
+	for _, d := range audioDrivers {
+		if d.Status() != driver.StateOpened {
+			log.Println("Closing microphone...")
+			err := d.Close()
+			if err != nil {
+				log.Println("Close driver failed", err)
+			}
+			log.Println("Close microphone finished.")
+		}
+	}
+}
+
+func (element *Muxer) janusEventsHandle(handle *janus.Handle) {
+	// wait for event
+	for {
+		msg := <-handle.Events
+		switch msg := msg.(type) {
+		case *janus.SlowLinkMsg:
+			log.Println("SlowLinkMsg type, user:", handle.User)
+		case *janus.MediaMsg:
+			if msg.Type == "audio" {
+				if !msg.Receiving {
+					if !element.stopSendingAudio {
+						element.stopSendingAudio = true
+						time.AfterFunc(3*time.Second, func() {
+							if element.stopSendingAudio {
+								log.Println("No audio in 3s, closing audio driver...")
+								element.closeAudioDriverIfNecessary()
+							}
+						})
+					}
+				} else {
+					element.stopSendingAudio = false
+				}
+			}
+			log.Println("MediaEvent type", msg.Type, "receiving", msg.Receiving, "user:", handle.User)
+		case *janus.WebRTCUpMsg:
+			log.Println("WebRTCUpMsg type, user:", handle.User)
+		case *janus.HangupMsg:
+			log.Println("HangupEvent type", handle.User)
+		case *janus.EventMsg:
+			// log.Printf("EventMsg %+v", msg.Plugindata.Data)
+		}
 	}
 }
 

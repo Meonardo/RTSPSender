@@ -3,7 +3,6 @@ module RTSPSender
 go 1.17
 
 require (
-	github.com/aler9/gortsplib v0.0.0-20220829125132-e99f799c07e7
 	github.com/gin-gonic/gin v1.8.1
 	github.com/gorilla/websocket v1.5.0
 	github.com/pion/dtls/v2 v2.1.5
@@ -52,6 +51,6 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
 
-replace github.com/pion/mediadevices => github.com/Meonardo/mediadevices v1.3.7
+replace github.com/pion/mediadevices => github.com/Meonardo/mediadevices v1.3.8-0.20220909040144-d630165db405
 
 replace github.com/gen2brain/malgo => github.com/Meonardo/malgo v0.0.1

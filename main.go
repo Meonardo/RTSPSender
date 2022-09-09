@@ -16,7 +16,6 @@ import (
 import (
 	"bufio"
 	"os/signal"
-	"regexp"
 	"syscall"
 )
 
@@ -40,7 +39,7 @@ func makeConfig() {
 		log.Println("Already make config, ignore it.")
 		return
 	}
-	config.Config.Clients = make(map[string]config.RTSPClient)
+	config.Config.Clients = make(map[string]config.Client)
 
 	if runtime.GOOS == "windows" && !DEBUG {
 		home := os.Getenv("HOMEDRIVE") + os.Getenv("HOMEPATH")
@@ -48,7 +47,7 @@ func makeConfig() {
 			home = os.Getenv("USERPROFILE")
 		}
 
-		logPath := home + "\\RTSPSender"
+		logPath := home + "\\AudioSender"
 		if _, err := os.Stat(logPath); os.IsNotExist(err) {
 			err := os.Mkdir(logPath, 0644)
 			if err != nil {
@@ -75,6 +74,21 @@ func StartPublishing(p *C.char) int {
 	makeConfig()
 	var startedSuccess = false
 
+	defer func() {
+		if !startedSuccess {
+			if config.Config.Client.WebRTC != nil {
+				config.Config.Client.WebRTC.Close()
+				config.Config.Client.WebRTC = nil
+			}
+			config.Config.Client = nil
+		}
+	}()
+
+	if config.Config.Client != nil {
+		log.Println("Already published!")
+		return -10
+	}
+
 	c := strings.Fields(C.GoString(p))
 	configs := strings.Join(c, "")
 	log.Printf("StartPublishing..., Configs = %s", configs)
@@ -84,18 +98,11 @@ func StartPublishing(p *C.char) int {
 		return -1
 	}
 
-	var client config.RTSPClient
+	var client config.Client
 	err := json.Unmarshal([]byte(configs), &client)
 	if err != nil {
 		log.Println("Decode JSON object failed!")
 		return -2
-	}
-
-	rtsp := client.URL
-	var validURL = regexp.MustCompile(config.RTSPReg)
-	if !validURL.MatchString(rtsp) {
-		log.Println("Please input validate RTSP camera URL!")
-		return -9
 	}
 
 	room := client.Room
@@ -105,13 +112,8 @@ func StartPublishing(p *C.char) int {
 	}
 	id := client.ID
 	if len(id) == 0 {
-		log.Println("Please input camera ID")
+		log.Println("Please input ID")
 		return -4
-	}
-	uuid := room + "_" + id
-	if config.Config.Exist(uuid) {
-		log.Printf("Camera ID %s is currently publishing!", id)
-		return -5
 	}
 
 	display := client.Display
@@ -120,18 +122,9 @@ func StartPublishing(p *C.char) int {
 		return -6
 	}
 
-	defer func() {
-		if !startedSuccess {
-			config.Config.DelClient(uuid)
-		}
-	}()
-
-	if !config.Config.AddClient(uuid, client) {
-		log.Printf("Camera(%s) add failed!", id)
-		return -11
-	}
-
-	msg, err := Stream2WebRTC(uuid)
+	// save the client
+	config.Config.Client = &client
+	msg, err := Stream2WebRTC(&client)
 
 	if err != nil {
 		if len(msg) == 0 {
@@ -139,55 +132,84 @@ func StartPublishing(p *C.char) int {
 		} else {
 			msg += ", " + err.Error()
 		}
+
 		log.Println(msg)
 		return -12
 	}
 
 	startedSuccess = true
-
 	return 0
 }
 
 //StopPublishing :
 //export StopPublishing
-func StopPublishing(ID int64, Room int64) int {
-	if ID <= 0 || Room <= 0 {
-		log.Print("Please input room number and Camera ID")
-		return -1
-	}
-	log.Printf("StopPublishing ID = %d, Room = %d", ID, Room)
-
-	id := fmt.Sprint(ID)
-	room := fmt.Sprint(Room)
-
-	uuid := room + "_" + id
-	if !config.Config.Exist(uuid) {
-		log.Printf("Camera ID %s not exist!", id)
-		return -2
+func StopPublishing() int {
+	if config.Config.Client == nil {
+		log.Println("No sound is publising!")
+		return -10
 	}
 
-	client := config.Config.Clients[uuid]
+	client := config.Config.Client
 	// destroy webrtc client
 	if client.WebRTC != nil {
 		log.Printf("Destroying (%s) WebRTC resource\n", client.ID)
 		client.WebRTC.Close()
 		client.WebRTC = nil
+		config.Config.Client = nil
 	} else {
 		log.Printf("Destroy (%s) WebRTC resource failed: client does not exist! exec anyway\n", client.ID)
 	}
-	config.Config.DelClient(uuid)
 
 	time.Sleep(100 * time.Millisecond)
 	return 0
 }
 
-//Stream2WebRTC RTSP stream video over WebRTC
-func Stream2WebRTC(uuid string) (string, error) {
-	if !config.Config.Exist(uuid) {
-		return "", fmt.Errorf(fmt.Sprintf("Stream %s NOT found", uuid))
+// Start mixing default speaker sound with the Mic.
+//export StartMixingSounds
+func StartMixingSounds() int {
+	if config.Config.Client == nil {
+		log.Println("No sound is publising!")
+		return -10
 	}
 
-	client := config.Config.Clients[uuid]
+	if config.Config.Client.WebRTC == nil {
+		log.Println("No sound is publising!")
+		return -10
+	}
+
+	success := config.Config.Client.WebRTC.StartMixingSounds()
+	if !success {
+		log.Println("Can not start mixing sounds!")
+		return -100
+	}
+
+	return 0
+}
+
+// Stop mixing sounds.
+//export StopMixingSounds
+func StopMixingSounds() int {
+	if config.Config.Client == nil {
+		log.Println("No sound is publising!")
+		return -10
+	}
+
+	if config.Config.Client.WebRTC == nil {
+		log.Println("No sound is publising!")
+		return -10
+	}
+
+	success := config.Config.Client.WebRTC.StopMixingSounds()
+	if !success {
+		log.Println("Can not stop mixing sounds!")
+		return -100
+	}
+
+	return 0
+}
+
+//Stream2WebRTC audio over WebRTC
+func Stream2WebRTC(client *config.Client) (string, error) {
 	muxerWebRTC := webrtc.NewMuxer(webrtc.Options{
 		ICEServers:    client.ICEServers,
 		ICEUsername:   client.ICEUsername,
@@ -198,7 +220,6 @@ func Stream2WebRTC(uuid string) (string, error) {
 		client.ID,
 		client.Room,
 		client.Pin,
-		client.URL,
 		client.Janus,
 		client.Mic,
 		client.Display)
@@ -206,22 +227,23 @@ func Stream2WebRTC(uuid string) (string, error) {
 		return msg, err
 	}
 
-	config.Config.AddRTC2Stream(uuid, muxerWebRTC)
-
+	client.WebRTC = muxerWebRTC
 	return "", nil
 }
 
-// test
-
+////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////
+///
+/// tests
 var iceServer = []string{
 	"stun:192.168.99.48:3478",
 	"turn:192.168.99.48:3478",
-}
-var testCameras = map[string]string{
-	// "6": "rtsp://192.168.99.47/1",
-	"8": "rtsp://192.168.99.23/2",
-	// "3": "rtsp://192.168.99.16/1",
-	// "4": "rtsp://192.168.99.18/1",
 }
 var icePasswd = "123456"
 var iceUsername = "root"
@@ -259,18 +281,14 @@ func testFromCLI() {
 
 		if text == "q" {
 			break
-		} else if text == "1" {
-			testSwitch("1")
-		} else if text == "2" {
-			testSwitch("2")
+		} else if text == "startMixing" {
+			testStartMixing()
+		} else if text == "stopMixing" {
+			testStopMixing()
 		} else if text == "start" {
 			testStart(publishingUUID)
 		} else if text == "stop" {
 			testStop(publishingUUID)
-		} else if text == "startAll" {
-			testStartAll()
-		} else if text == "stopAll" {
-			testStopAll()
 		}
 	}
 
@@ -281,17 +299,9 @@ func testFromCLI() {
 }
 
 func testStart(uuid string) {
-	url := testCameras[uuid]
-	var validURL = regexp.MustCompile(config.RTSPReg)
-	if !validURL.MatchString(url) {
-		log.Println("Please input validate RTSP camera URL!")
-		return
-	}
+	display := uuid + "(AudioOnly)"
 
-	display := url
-
-	client := config.RTSPClient{
-		URL:           url,
+	client := config.Client{
 		ID:            uuid,
 		Room:          room,
 		Pin:           room,
@@ -307,31 +317,22 @@ func testStart(uuid string) {
 		client.Mic = config.GetMD5Hash(client.Mic)
 	}
 
-	if !config.Config.AddClient(uuid, client) {
-		return
-	}
+	// save the client
+	config.Config.Client = &client
 
-	_, err := Stream2WebRTC(uuid)
+	_, err := Stream2WebRTC(&client)
 	if err != nil {
 		log.Println(err)
 	}
 }
 
-func testSwitch(uuid string) {
-	if publishingUUID == uuid {
-		return
-	}
-	testStop(publishingUUID)
-	testStart(uuid)
-	publishingUUID = uuid
-}
-
 func testStop(uuid string) {
-	if !config.Config.Exist(uuid) {
+	if config.Config.Client == nil {
+		log.Print("No client started yet, please start a client first!")
 		return
 	}
 
-	client := config.Config.Clients[uuid]
+	client := config.Config.Client
 	// destroy webrtc client
 	if client.WebRTC != nil {
 		log.Printf("Destroying (%s) WebRTC resource\n", client.ID)
@@ -340,19 +341,13 @@ func testStop(uuid string) {
 	} else {
 		log.Printf("Destroy (%s) WebRTC resource failed: client does not exist! exec anyway\n", client.ID)
 	}
-	config.Config.DelClient(uuid)
-
 	time.Sleep(100 * time.Millisecond)
 }
 
-func testStartAll() {
-	for uuid, _ := range testCameras {
-		testStart(uuid)
-	}
+func testStartMixing() {
+	StartMixingSounds()
 }
 
-func testStopAll() {
-	for uuid, _ := range testCameras {
-		testStop(uuid)
-	}
+func testStopMixing() {
+	StopMixingSounds()
 }

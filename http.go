@@ -11,7 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const port = ":9981"
+const port = ":9982"
 
 func serveHTTP() {
 	log.Printf("Staring HTTP server at port %s\n", port)
@@ -20,8 +20,10 @@ func serveHTTP() {
 	router := gin.Default()
 	router.Use(CORSMiddleware())
 
-	router.POST("/camera/push/stop", Stop)
-	router.POST("/camera/push/start", Start)
+	router.POST("/audio/push/stop", Stop)
+	router.POST("/audio/push/start", Start)
+	router.POST("/audio/mix/start", StartMixing)
+	router.POST("/audio/mix/stop", StartMixing)
 
 	err := router.Run(port)
 	if err != nil {
@@ -32,6 +34,16 @@ func serveHTTP() {
 func Start(c *gin.Context) {
 	var startedSuccess = false
 
+	defer func() {
+		if !startedSuccess {
+			if config.Config.Client.WebRTC != nil {
+				config.Config.Client.WebRTC.Close()
+				config.Config.Client.WebRTC = nil
+			}
+			config.Config.Client = nil
+		}
+	}()
+
 	configs := c.PostForm("configs")
 	if len(configs) == 0 {
 		MakeResponse(false, -1, "Missing mandatory field `configs`!", c)
@@ -39,7 +51,7 @@ func Start(c *gin.Context) {
 	}
 	log.Println("Configure Request, params: ", configs)
 
-	var client config.RTSPClient
+	var client config.Client
 	err := json.Unmarshal([]byte(configs), &client)
 	if err != nil {
 		MakeResponse(false, -2, "Decode JSON object failed!", c)
@@ -56,11 +68,6 @@ func Start(c *gin.Context) {
 		MakeResponse(false, -5, "Please input camera ID", c)
 		return
 	}
-	uuid := room + "_" + id
-	if config.Config.Exist(uuid) {
-		MakeResponse(false, -8, fmt.Sprintf("Camera ID %s is currently publishing!", id), c)
-		return
-	}
 
 	display := client.Display
 	if len(display) == 0 {
@@ -72,27 +79,9 @@ func Start(c *gin.Context) {
 	if len(mic) > 0 {
 		client.Mic = config.GetMD5Hash(mic)
 	}
-	// if runtime.GOOS == "windows" && len(mic) > 0 {
-	// 	micID := config.MicGUIDFromName(mic)
-	// 	if len(micID) == 0 {
-	// 		MakeResponse(false, -7, "Invalidate microphone device name!", c)
-	// 		return
-	// 	}
-	// 	// client.Mic = micID
-	// }
 
-	defer func() {
-		if !startedSuccess {
-			config.Config.DelClient(uuid)
-		}
-	}()
-
-	if !config.Config.AddClient(uuid, client) {
-		MakeResponse(false, -5, fmt.Sprintf("Camera(%s) not config yet!", id), c)
-		return
-	}
-
-	msg, err := StreamWebRTC(uuid)
+	config.Config.Client = &client
+	msg, err := StreamWebRTC(&client)
 
 	if err != nil {
 		if len(msg) == 0 {
@@ -109,34 +98,60 @@ func Start(c *gin.Context) {
 }
 
 func Stop(c *gin.Context) {
-	id := c.PostForm("id")
-	room := c.PostForm("room")
-	if len(id) == 0 || len(room) == 0 {
-		MakeResponse(false, -5, "Please input room number and Camera ID", c)
-		return
+	if config.Config.Client == nil {
+		MakeResponse(false, -9, "No sound is publising!", c)
 	}
 
-	uuid := room + "_" + id
-	if !config.Config.Exist(uuid) {
-		MakeResponse(false, -1, fmt.Sprintf("Camera ID %s not exist!", id), c)
-		return
-	}
-
-	client := config.Config.Clients[uuid]
+	client := config.Config.Client
 	// destroy webrtc client
 	if client.WebRTC != nil {
 		log.Printf("Destroying (%s) WebRTC resource\n", client.ID)
 		client.WebRTC.Close()
 		client.WebRTC = nil
+		config.Config.Client = nil
 	} else {
 		log.Printf("Destroy (%s) WebRTC resource failed: client does not exist! exec anyway\n", client.ID)
 	}
 
-	log.Printf("Ready to delete client...")
-	config.Config.DelClient(uuid)
-	log.Printf("Delete client")
+	MakeResponse(true, 1, "Stop successfully!", c)
+}
 
-	MakeResponse(true, 1, fmt.Sprintf("Stop ID %s successfully!", id), c)
+// Start mixing default speaker sound with the Mic.
+func StartMixing(c *gin.Context) {
+	if config.Config.Client == nil {
+		MakeResponse(false, -9, "No sound is publising!", c)
+		return
+	}
+
+	if config.Config.Client.WebRTC == nil {
+		MakeResponse(false, -9, "No sound is publising!", c)
+		return
+	}
+
+	success := config.Config.Client.WebRTC.StartMixingSounds()
+	if !success {
+		MakeResponse(false, -100, "Can not start mixing sounds", c)
+		return
+	}
+}
+
+// Stop mixing sounds.
+func StopMixing(c *gin.Context) {
+	if config.Config.Client == nil {
+		MakeResponse(false, -9, "No sound is publising!", c)
+		return
+	}
+
+	if config.Config.Client.WebRTC == nil {
+		MakeResponse(false, -9, "No sound is publising!", c)
+		return
+	}
+
+	success := config.Config.Client.WebRTC.StopMixingSounds()
+	if !success {
+		MakeResponse(false, -101, "Can not stop mixing sounds", c)
+		return
+	}
 }
 
 func MakeResponse(success bool, code int, data string, c *gin.Context) {
@@ -148,13 +163,8 @@ func MakeResponse(success bool, code int, data string, c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"state": state, "code": data})
 }
 
-//StreamWebRTC stream video over WebRTC
-func StreamWebRTC(uuid string) (string, error) {
-	if !config.Config.Exist(uuid) {
-		return "", fmt.Errorf(fmt.Sprintf("Stream %s NOT found", uuid))
-	}
-
-	client := config.Config.Clients[uuid]
+//StreamWebRTC
+func StreamWebRTC(client *config.Client) (string, error) {
 	muxerWebRTC := webrtc.NewMuxer(webrtc.Options{
 		ICEServers:    client.ICEServers,
 		ICEUsername:   client.ICEUsername,
@@ -165,7 +175,6 @@ func StreamWebRTC(uuid string) (string, error) {
 		client.ID,
 		client.Room,
 		client.Pin,
-		client.URL,
 		client.Janus,
 		client.Mic,
 		client.Display)
@@ -173,20 +182,10 @@ func StreamWebRTC(uuid string) (string, error) {
 		return msg, err
 	}
 
-	config.Config.AddRTC2Stream(uuid, muxerWebRTC)
+	client.WebRTC = muxerWebRTC
 
 	return "", nil
 }
-
-//func reconnect(uuid string) {
-//	log.Println("Prepare to reconnect: ", uuid)
-//
-//	msg, err := StreamWebRTC(uuid)
-//
-//	if err != nil {
-//		log.Printf("Reconnect error: %s, msg: %s", err, msg)
-//	}
-//}
 
 func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
