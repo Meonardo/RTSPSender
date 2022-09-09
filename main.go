@@ -299,8 +299,12 @@ func testFromCLI() {
 }
 
 func testStart(uuid string) {
-	display := uuid + "(AudioOnly)"
+	if config.Config.Client != nil {
+		log.Println("Already published!")
+		return
+	}
 
+	display := uuid + "(AudioOnly)"
 	client := config.Client{
 		ID:            uuid,
 		Room:          room,
@@ -338,6 +342,7 @@ func testStop(uuid string) {
 		log.Printf("Destroying (%s) WebRTC resource\n", client.ID)
 		client.WebRTC.Close()
 		client.WebRTC = nil
+		config.Config.Client = nil
 	} else {
 		log.Printf("Destroy (%s) WebRTC resource failed: client does not exist! exec anyway\n", client.ID)
 	}
