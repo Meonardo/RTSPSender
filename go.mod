@@ -51,6 +51,6 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
 
-replace github.com/pion/mediadevices => github.com/Meonardo/mediadevices v1.3.8-0.20220909040144-d630165db405
+replace github.com/pion/mediadevices => github.com/Meonardo/mediadevices v1.3.8-0.20220909100149-1de6b1e5d00b
 
 replace github.com/gen2brain/malgo => github.com/Meonardo/malgo v0.0.1
