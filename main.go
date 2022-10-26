@@ -16,6 +16,7 @@ import (
 import (
 	"bufio"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 )
 
@@ -45,6 +46,12 @@ func makeConfig() {
 		home := os.Getenv("HOMEDRIVE") + os.Getenv("HOMEPATH")
 		if home == "" {
 			home = os.Getenv("USERPROFILE")
+		}
+
+		// check if can detect the executebale file dir
+		ex, err := os.Executable()
+		if err == nil {
+			home = filepath.Dir(ex)
 		}
 
 		logPath := home + "\\AudioSender"
@@ -210,6 +217,56 @@ func StopMixingSounds() int {
 	return 0
 }
 
+// Switch microphone.
+//export SwitchMicrophone
+func SwitchMicrophone(p *C.char) int {
+	if config.Config.Client == nil {
+		log.Println("No sound is publising!")
+		return -10
+	}
+
+	if config.Config.Client.WebRTC == nil {
+		log.Println("No sound is publising!")
+		return -10
+	}
+
+	c := strings.Fields(C.GoString(p))
+	newMicrophone := strings.Join(c, "")
+	log.Printf("Prepare to switch new mic: %s\n", newMicrophone)
+
+	if config.Config.Client.Mic == newMicrophone {
+		log.Println("Target microphone is matched the new microphone!")
+		return -2
+	}
+
+	isMixingSounds := config.Config.Client.WebRTC.IsMixing
+	oldClient := config.Config.CopyClient()
+	// stop first,
+	StopPublishing()
+	// then republish
+	oldClient.Mic = newMicrophone
+	config.Config.Client = &oldClient
+	msg, err := Stream2WebRTC(&oldClient)
+
+	if err != nil {
+		if len(msg) == 0 {
+			msg += "janus error: " + err.Error()
+		} else {
+			msg += ", " + err.Error()
+		}
+
+		log.Println(msg)
+		return -12
+	}
+
+	// restore mixing
+	if isMixingSounds {
+		StartMixingSounds()
+	}
+
+	return 0
+}
+
 //Stream2WebRTC audio over WebRTC
 func Stream2WebRTC(client *config.Client) (string, error) {
 	muxerWebRTC := webrtc.NewMuxer(webrtc.Options{
@@ -253,6 +310,7 @@ var room = "123456"
 
 //"Internal Microphone (Cirrus Logic CS8409 (AB 57))"
 var mic = "Microphone Array (Realtek(R) Audio)"
+var mic1 = "Stereo Mix (Realtek(R) Audio)"
 var janus = "ws://192.168.99.48:8188"
 
 var publishingUUID = "1"
@@ -291,6 +349,10 @@ func testFromCLI() {
 			testStart(publishingUUID)
 		} else if text == "stop" {
 			testStop(publishingUUID)
+		} else if text == "sm1" {
+			testSwitchMic(mic)
+		} else if text == "sm2" {
+			testSwitchMic(mic1)
 		}
 	}
 
@@ -357,4 +419,12 @@ func testStartMixing() {
 
 func testStopMixing() {
 	StopMixingSounds()
+}
+
+func testSwitchMic(mic string) {
+	nameHash := config.GetMD5Hash(mic)
+
+	cstr := C.CString(nameHash)
+	SwitchMicrophone(cstr)
+	// C.free(unsafe.Pointer(cstr))
 }

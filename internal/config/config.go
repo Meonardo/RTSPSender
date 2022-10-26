@@ -37,6 +37,21 @@ type Client struct {
 	WebRTC *webrtc.Muxer
 }
 
+func (element *Configs) CopyClient() Client {
+	var c = Client{
+		ID:            element.Client.ID,
+		Room:          element.Client.Room,
+		Pin:           element.Client.Pin,
+		Display:       element.Client.Display,
+		Mic:           element.Client.Mic,
+		Janus:         element.Client.Janus,
+		ICEServers:    element.Client.ICEServers,
+		ICEUsername:   element.Client.ICEUsername,
+		ICECredential: element.Client.ICECredential,
+	}
+	return c
+}
+
 func (element *Configs) AddClient(id string, client Client) bool {
 	element.mutex.Lock()
 	defer element.mutex.Unlock()

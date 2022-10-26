@@ -24,13 +24,14 @@ import (
 )
 
 type Muxer struct {
-	status              webrtc.ICEConnectionState
-	stop                bool
-	pc                  *webrtc.PeerConnection
-	audioCodecSelector  *mediadevices.CodecSelector
-	stopSendingAudio    bool
-	recordingDeviceName string
-	playbackDeviceName  string
+	status                  webrtc.ICEConnectionState
+	stop                    bool
+	pc                      *webrtc.PeerConnection
+	audioCodecSelector      *mediadevices.CodecSelector
+	stopSendingAudio        bool
+	recordingDeviceName     string
+	lastRecordingDeviceName string
+	IsMixing                bool
 
 	Options Options
 	Janus   *janus.Gateway
@@ -112,6 +113,57 @@ func (element *Muxer) NewPeerConnection(configuration webrtc.Configuration) (*we
 	return api.NewPeerConnection(configuration)
 }
 
+func (element *Muxer) getAudioTrack(deviceNameHash string) (*mediadevices.AudioTrack, string, error) {
+	var deviceName = ""
+	var hasAudio = len(deviceNameHash) > 0 && deviceNameHash != "mute"
+	if !hasAudio {
+		return nil, deviceName, errors.New("invalid microphone device name")
+	}
+
+	var deviceID = ""
+	deviceInfo := mediadevices.EnumerateDevices()
+	if len(deviceInfo) > 0 {
+		for _, device := range deviceInfo {
+			deviceName = device.Name
+			deviceNameHash_ := getMD5Hash(device.Name)
+			if device.Kind == mediadevices.AudioInput && strings.EqualFold(deviceNameHash_, deviceNameHash) {
+				hasAudio = true
+				deviceID = device.DeviceID
+				log.Printf("Found Audio Device: %s, name: %s", device, device.Name)
+				break
+			} else {
+				hasAudio = false
+			}
+		}
+	} else {
+		hasAudio = false
+	}
+
+	if !hasAudio {
+		return nil, "", errors.New("can not found the target device")
+	}
+
+	// Filter audio(microphone) device id by name
+	s, err := mediadevices.GetUserMedia(mediadevices.MediaStreamConstraints{
+		Audio: func(c *mediadevices.MediaTrackConstraints) {
+			c.DeviceID = prop.String(deviceID)
+			c.SampleSize = prop.Int(2)
+			c.SampleRate = prop.Int(48000)
+			c.IsFloat = prop.BoolExact(true)
+			c.IsInterleaved = prop.BoolExact(true)
+		},
+		Codec: element.audioCodecSelector,
+	})
+
+	if err != nil {
+		log.Println("Audio track create failed", err)
+		return nil, deviceName, err
+	} else {
+		audioTrack := s.GetAudioTracks()[0].(*mediadevices.AudioTrack)
+		return audioTrack, deviceName, err
+	}
+}
+
 func (element *Muxer) WriteHeader(
 	ID string,
 	Room string,
@@ -126,61 +178,15 @@ func (element *Muxer) WriteHeader(
 		return "Create pc failed", err
 	}
 
-	var hasAudio = len(Mic) > 0 && Mic != "mute"
-	var deviceID = ""
-	if hasAudio {
-		deviceInfo := mediadevices.EnumerateDevices()
-		if len(deviceInfo) > 0 {
-			for _, device := range deviceInfo {
-				deviceName := getMD5Hash(device.Name)
-				element.recordingDeviceName = device.Name
-				if device.Kind == mediadevices.AudioInput && strings.EqualFold(deviceName, Mic) {
-					hasAudio = true
-					deviceID = device.DeviceID
-					log.Printf("Found Audio Device: %s, name: %s", device, device.Name)
-					break
-				} else {
-					hasAudio = false
-				}
-			}
-		} else {
-			hasAudio = false
-		}
-
-		if !hasAudio {
-			return "No microphone device found in this machine", nil
-		}
+	audioTrack, deviceName, err := element.getAudioTrack(Mic)
+	if err != nil {
+		return "Can not find audio track", err
 	}
-
-	if hasAudio && element.audioCodecSelector != nil {
-		// Filter audio(microphone) device id by name
-		s, err := mediadevices.GetUserMedia(mediadevices.MediaStreamConstraints{
-			Audio: func(c *mediadevices.MediaTrackConstraints) {
-				c.DeviceID = prop.String(deviceID)
-				c.SampleSize = prop.Int(2)
-				c.SampleRate = prop.Int(48000)
-				c.IsFloat = prop.BoolExact(true)
-				c.IsInterleaved = prop.BoolExact(true)
-			},
-			Codec: element.audioCodecSelector,
-		})
-
-		if err != nil {
-			log.Println("Audio track create failed", err)
-			hasAudio = false
-		} else {
-			audioTrack := s.GetAudioTracks()[0].(*mediadevices.AudioTrack)
-			_, err = peerConnection.AddTransceiverFromTrack(audioTrack,
-				webrtc.RTPTransceiverInit{
-					Direction: webrtc.RTPTransceiverDirectionSendonly,
-				},
-			)
-
-			if err != nil {
-				return "Add audio track failed", err
-			}
-		}
+	_, err = peerConnection.AddTransceiverFromTrack(audioTrack, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
+	if err != nil {
+		return "Add audio track failed", err
 	}
+	element.recordingDeviceName = deviceName
 
 	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
 		element.status = connectionState
@@ -330,8 +336,9 @@ func (element *Muxer) Close() {
 func (element *Muxer) StartMixingSounds() bool {
 	audioDrivers := driver.GetManager().Query(driver.FilterAudioRecorder())
 	for _, d := range audioDrivers {
-		if d.Status() != driver.StateOpened && d.Info().Name == element.recordingDeviceName {
+		if d.Info().Name == element.recordingDeviceName {
 			log.Println("Mixing sounds.")
+			element.IsMixing = true
 			return d.StartMixing()
 		}
 	}
@@ -341,24 +348,53 @@ func (element *Muxer) StartMixingSounds() bool {
 func (element *Muxer) StopMixingSounds() bool {
 	audioDrivers := driver.GetManager().Query(driver.FilterAudioRecorder())
 	for _, d := range audioDrivers {
-		if d.Status() != driver.StateOpened && d.Info().Name == element.recordingDeviceName {
+		if d.Info().Name == element.recordingDeviceName {
 			log.Println("Mixing sounds stopped.")
+			element.IsMixing = false
 			return d.StopMixing()
 		}
 	}
 	return false
 }
 
+func (element *Muxer) SwitchMicrophone(newMic string) bool {
+	// close audio driver first
+	element.closeAudioDriverIfNecessary()
+	if element.pc != nil {
+		senders := element.pc.GetSenders()
+		if len(senders) == 0 {
+			return false
+		}
+		// find the target audio track
+		audioTrack, deviceName, err := element.getAudioTrack(newMic)
+		if err != nil {
+			log.Println("Can not find audio track:", err)
+			return false
+		}
+		// replace audio track
+		err = senders[0].ReplaceTrack(audioTrack)
+		if err != nil {
+			log.Println("Can not replace audio track:", err)
+			return false
+		}
+
+		element.lastRecordingDeviceName = element.recordingDeviceName
+		element.recordingDeviceName = deviceName
+	}
+
+	log.Println("Switch microphone successfully!")
+
+	return true
+}
+
 func (element *Muxer) closeAudioDriverIfNecessary() {
 	audioDrivers := driver.GetManager().Query(driver.FilterAudioRecorder())
 	for _, d := range audioDrivers {
-		if d.Status() != driver.StateOpened {
-			log.Println("Closing microphone...")
+		if d.Status() != driver.StateClosed {
 			err := d.Close()
 			if err != nil {
 				log.Println("Close driver failed", err)
 			}
-			log.Println("Close microphone finished.")
 		}
 	}
 }
@@ -379,6 +415,7 @@ func (element *Muxer) janusEventsHandle(handle *janus.Handle) {
 							if element.stopSendingAudio {
 								log.Println("No audio in 3s, closing audio driver...")
 								element.closeAudioDriverIfNecessary()
+								//element.resendAudio()
 							}
 						})
 					}
@@ -395,6 +432,13 @@ func (element *Muxer) janusEventsHandle(handle *janus.Handle) {
 			// log.Printf("EventMsg %+v", msg.Plugindata.Data)
 		}
 	}
+}
+
+func (element *Muxer) resendAudio() {
+	time.AfterFunc(1*time.Second, func() {
+		log.Println("Restore last selected microphone.")
+		element.SwitchMicrophone(getMD5Hash(element.recordingDeviceName))
+	})
 }
 
 func getMD5Hash(text string) string {
