@@ -24,11 +24,13 @@ import (
 )
 
 type Muxer struct {
-	status             webrtc.ICEConnectionState
-	stop               bool
-	pc                 *webrtc.PeerConnection
-	audioCodecSelector *mediadevices.CodecSelector
-	stopSendingAudio   bool
+	status              webrtc.ICEConnectionState
+	stop                bool
+	pc                  *webrtc.PeerConnection
+	audioCodecSelector  *mediadevices.CodecSelector
+	stopSendingAudio    bool
+	recordingDeviceName string
+	playbackDeviceName  string
 
 	Options Options
 	Janus   *janus.Gateway
@@ -131,6 +133,7 @@ func (element *Muxer) WriteHeader(
 		if len(deviceInfo) > 0 {
 			for _, device := range deviceInfo {
 				deviceName := getMD5Hash(device.Name)
+				element.recordingDeviceName = device.Name
 				if device.Kind == mediadevices.AudioInput && strings.EqualFold(deviceName, Mic) {
 					hasAudio = true
 					deviceID = device.DeviceID
@@ -327,7 +330,7 @@ func (element *Muxer) Close() {
 func (element *Muxer) StartMixingSounds() bool {
 	audioDrivers := driver.GetManager().Query(driver.FilterAudioRecorder())
 	for _, d := range audioDrivers {
-		if d.Status() != driver.StateOpened {
+		if d.Status() != driver.StateOpened && d.Info().Name == element.recordingDeviceName {
 			log.Println("Mixing sounds.")
 			return d.StartMixing()
 		}
@@ -338,7 +341,7 @@ func (element *Muxer) StartMixingSounds() bool {
 func (element *Muxer) StopMixingSounds() bool {
 	audioDrivers := driver.GetManager().Query(driver.FilterAudioRecorder())
 	for _, d := range audioDrivers {
-		if d.Status() != driver.StateOpened {
+		if d.Status() != driver.StateOpened && d.Info().Name == element.recordingDeviceName {
 			log.Println("Mixing sounds stopped.")
 			return d.StopMixing()
 		}

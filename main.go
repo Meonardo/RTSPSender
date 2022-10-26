@@ -19,7 +19,7 @@ import (
 	"syscall"
 )
 
-const DEBUG = true
+const DEBUG = false
 const UsingCLI = true
 
 func main() {
@@ -76,11 +76,13 @@ func StartPublishing(p *C.char) int {
 
 	defer func() {
 		if !startedSuccess {
-			if config.Config.Client.WebRTC != nil {
-				config.Config.Client.WebRTC.Close()
-				config.Config.Client.WebRTC = nil
+			if config.Config.Client != nil {
+				if config.Config.Client.WebRTC != nil {
+					config.Config.Client.WebRTC.Close()
+					config.Config.Client.WebRTC = nil
+				}
+				config.Config.Client = nil
 			}
-			config.Config.Client = nil
 		}
 	}()
 

@@ -1,7 +1,7 @@
-github.com/Meonardo/malgo v0.0.1 h1:VPA3a8JT+n9MbzymgyV6cJSWnXiR20tWfV2+BEYkzM8=
-github.com/Meonardo/malgo v0.0.1/go.mod h1:f9TtuN7DVrXMiV/yIceMeWpvanyVzJQMlBecJFVMxww=
-github.com/Meonardo/mediadevices v1.3.8-0.20220909100149-1de6b1e5d00b h1:QYj72n11WnCyAcgZ+LNKHTQ+pDk/WSQ0K96MuuBDuKk=
-github.com/Meonardo/mediadevices v1.3.8-0.20220909100149-1de6b1e5d00b/go.mod h1:OR9xpH2kAoQpImQnk3O07+yHxf8erflz2VokdWxPH4I=
+github.com/Meonardo/malgo v0.0.2-0.20221026022642-92145eea6eea h1:6wBZ8/J0A/mGcO2zAVJ6Eq8Rwb8M192bJY2BNV/P5OU=
+github.com/Meonardo/malgo v0.0.2-0.20221026022642-92145eea6eea/go.mod h1:f9TtuN7DVrXMiV/yIceMeWpvanyVzJQMlBecJFVMxww=
+github.com/Meonardo/mediadevices v1.3.8-0.20221026023701-6b86b8af2033 h1:2Lqmj8PaPE3yNQ5VL+IgYN4ocxTTDXlQk2UCkopaDZM=
+github.com/Meonardo/mediadevices v1.3.8-0.20221026023701-6b86b8af2033/go.mod h1:OR9xpH2kAoQpImQnk3O07+yHxf8erflz2VokdWxPH4I=
 github.com/blackjack/webcam v0.0.0-20220329180758-ba064708e165/go.mod h1:G0X+rEqYPWSq0dG8OMf8M446MtKytzpPjgS3HbdOJZ4=
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
