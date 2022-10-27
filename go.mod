@@ -3,6 +3,7 @@ module RTSPSender
 go 1.17
 
 require (
+	github.com/gen2brain/malgo v0.10.35
 	github.com/gin-gonic/gin v1.8.1
 	github.com/gorilla/websocket v1.5.0
 	github.com/pion/dtls/v2 v2.1.5
@@ -14,7 +15,6 @@ require (
 )
 
 require (
-	github.com/gen2brain/malgo v0.10.35 // indirect
 	github.com/gin-contrib/sse v0.1.0 // indirect
 	github.com/go-playground/locales v0.14.0 // indirect
 	github.com/go-playground/universal-translator v0.18.0 // indirect
@@ -51,6 +51,6 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
 
-replace github.com/pion/mediadevices => github.com/Meonardo/mediadevices v1.3.8-0.20221026023701-6b86b8af2033
+replace github.com/pion/mediadevices => github.com/Meonardo/mediadevices v1.3.10-0.20221027122902-f6ed3fcd9097
 
 replace github.com/gen2brain/malgo => github.com/Meonardo/malgo v0.0.2-0.20221026022642-92145eea6eea

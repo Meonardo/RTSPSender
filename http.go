@@ -22,9 +22,6 @@ func serveHTTP() {
 
 	router.POST("/audio/push/stop", Stop)
 	router.POST("/audio/push/start", Start)
-	router.POST("/audio/mix/start", StartMixing)
-	router.POST("/audio/mix/stop", StartMixing)
-
 	err := router.Run(port)
 	if err != nil {
 		log.Fatalln("Start HTTP Server error", err)
@@ -114,44 +111,6 @@ func Stop(c *gin.Context) {
 	}
 
 	MakeResponse(true, 1, "Stop successfully!", c)
-}
-
-// Start mixing default speaker sound with the Mic.
-func StartMixing(c *gin.Context) {
-	if config.Config.Client == nil {
-		MakeResponse(false, -9, "No sound is publising!", c)
-		return
-	}
-
-	if config.Config.Client.WebRTC == nil {
-		MakeResponse(false, -9, "No sound is publising!", c)
-		return
-	}
-
-	success := config.Config.Client.WebRTC.StartMixingSounds()
-	if !success {
-		MakeResponse(false, -100, "Can not start mixing sounds", c)
-		return
-	}
-}
-
-// Stop mixing sounds.
-func StopMixing(c *gin.Context) {
-	if config.Config.Client == nil {
-		MakeResponse(false, -9, "No sound is publising!", c)
-		return
-	}
-
-	if config.Config.Client.WebRTC == nil {
-		MakeResponse(false, -9, "No sound is publising!", c)
-		return
-	}
-
-	success := config.Config.Client.WebRTC.StopMixingSounds()
-	if !success {
-		MakeResponse(false, -101, "Can not stop mixing sounds", c)
-		return
-	}
 }
 
 func MakeResponse(success bool, code int, data string, c *gin.Context) {

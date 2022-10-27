@@ -18,7 +18,7 @@ import (
 var debug = false
 
 func unexpected(request string) error {
-	return fmt.Errorf("Unexpected response received to '%s' request", request)
+	return fmt.Errorf("unexpected response received to '%s' request", request)
 }
 
 func newRequest(method string) (map[string]interface{}, chan interface{}) {
@@ -152,10 +152,6 @@ func (gateway *Gateway) ping() {
 	}
 }
 
-func (gateway *Gateway) sendloop() {
-
-}
-
 func (gateway *Gateway) recv() {
 
 	for {
@@ -246,9 +242,6 @@ func (gateway *Gateway) recv() {
 				gateway.transactionsUsed[id] = true
 			}
 			gateway.Unlock()
-			if transaction == nil {
-				// Error()
-			}
 
 			// Pass msg
 			go passMsg(transaction, msg)
