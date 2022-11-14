@@ -241,7 +241,7 @@ func (element *Muxer) connectJanusAndSendMsgs(
 		log.Printf("Room number invalid %s", err)
 	}
 
-	_, err = handle.Message(map[string]interface{}{
+	msg, err := handle.Message(map[string]interface{}{
 		"request": "join",
 		"ptype":   "publisher",
 		"room":    roomNum,
@@ -252,9 +252,16 @@ func (element *Muxer) connectJanusAndSendMsgs(
 	if err != nil {
 		return fmt.Sprintf("Join room %s failed", Room), err
 	}
+	if msg != nil && msg.Plugindata.Data != nil {
+		data := msg.Plugindata.Data
+		if data["error"] != nil {
+			return fmt.Sprintf("Join room %s failed", Room), fmt.Errorf("join room %s failed, reason: %s", Room, data["error"])
+		}
+	}
+
 	handle.User = fmt.Sprint(publisherID)
 
-	msg, err := handle.Message(map[string]interface{}{
+	msg, err = handle.Message(map[string]interface{}{
 		"request": "publish",
 		"audio":   true,
 		"video":   false,
@@ -300,7 +307,8 @@ func (element *Muxer) Close() {
 	}
 
 	if element.pc != nil {
-		element.closeAudioDriverIfNecessary()
+		log.Println("closeAudioDriverIfNecessary")
+		element.CloseAudioDriverIfNecessary()
 
 		log.Println("Closing pc...")
 		err := element.pc.Close()
@@ -312,7 +320,7 @@ func (element *Muxer) Close() {
 	}
 }
 
-func (element *Muxer) closeAudioDriverIfNecessary() {
+func (element *Muxer) CloseAudioDriverIfNecessary() {
 	audioDrivers := driver.GetManager().Query(driver.FilterAudioRecorder())
 	for _, d := range audioDrivers {
 		if d.Status() != driver.StateOpened {
@@ -322,6 +330,8 @@ func (element *Muxer) closeAudioDriverIfNecessary() {
 			}
 		}
 	}
+
+	log.Println("Close driver finished")
 }
 
 func (element *Muxer) janusEventsHandle(handle *janus.Handle) {

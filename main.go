@@ -196,6 +196,8 @@ func Stream2WebRTC(client *config.Client) (string, error) {
 		"client.Mic",
 		client.Display)
 	if err != nil {
+		// should close audio driver.
+		muxerWebRTC.CloseAudioDriverIfNecessary()
 		return msg, err
 	}
 
@@ -264,6 +266,20 @@ func testFromCLI() {
 }
 
 func testStart(uuid string) {
+	var startedSuccess = false
+
+	defer func() {
+		if !startedSuccess {
+			if config.Config.Client != nil {
+				if config.Config.Client.WebRTC != nil {
+					config.Config.Client.WebRTC.Close()
+					config.Config.Client.WebRTC = nil
+				}
+				config.Config.Client = nil
+			}
+		}
+	}()
+
 	if config.Config.Client != nil {
 		log.Println("Already published!")
 		return
@@ -292,8 +308,10 @@ func testStart(uuid string) {
 	_, err := Stream2WebRTC(&client)
 	if err != nil {
 		log.Println(err)
-		config.Config.Client = nil
+		return
 	}
+
+	startedSuccess = true
 }
 
 func testStop(uuid string) {
