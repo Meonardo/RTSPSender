@@ -65,10 +65,6 @@ func init() {
 		info, err := ctx.DeviceInfo(malgo.Capture, device.ID, malgo.Shared)
 		if err == nil {
 			priority := driver.PriorityNormal
-			if info.IsDefault > 0 {
-				priority = driver.PriorityHigh
-			}
-
 			name := device.Name()
 			name = strings.Trim(name, "\x00")
 
@@ -209,11 +205,14 @@ func (m *speaker) defaultPlaybackDevice(inputProp prop.Media) (*malgo.Device, er
 	}
 	device.SetAllowPlaybackAutoStreamRouting(true)
 
+	r := device.ChangeVolume(1.0)
+	log.Println("ChangeVolume result:", r)
+
 	return device, nil
 }
 
 func (m *speaker) AudioRecord(inputProp prop.Media) (audio.Reader, error) {
-	log.Println("AudioRecord starting...")
+	log.Printf("AudioRecord(%s) starting...\n", m.DeviceInfo.Name())
 	m.inputProp = inputProp
 
 	decoder, err := wave.NewDecoder(&wave.RawFormat{
@@ -269,7 +268,6 @@ func (m *speaker) AudioRecord(inputProp prop.Media) (audio.Reader, error) {
 
 func (m *speaker) Properties() []prop.Media {
 	var supportedProps []prop.Media
-	log.Println("Querying properties")
 
 	var isBigEndian bool
 	// miniaudio only uses the host endian
