@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/pion/logging"
 	"github.com/pion/mediadevices"
 
 	"github.com/pion/dtls/v2/pkg/protocol/extension"
@@ -23,6 +24,7 @@ import (
 
 type Muxer struct {
 	status             webrtc.ICEConnectionState
+	pcStatus           webrtc.PeerConnectionState
 	stop               bool
 	pc                 *webrtc.PeerConnection
 	audioCodecSelector *mediadevices.CodecSelector
@@ -44,6 +46,43 @@ type Options struct {
 	PortMin uint16
 	// PortMin is an optional maximum (inclusive) ephemeral UDP port range for the ICEServers connections
 	PortMax uint16
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// logger
+type customLogger struct{}
+
+// Print all messages except trace
+func (c customLogger) Trace(msg string)                          {}
+func (c customLogger) Tracef(format string, args ...interface{}) {}
+
+func (c customLogger) Debug(msg string) { log.Printf("Pion Debug: %s\n", msg) }
+func (c customLogger) Debugf(format string, args ...interface{}) {
+	c.Debug(fmt.Sprintf(format, args...))
+}
+func (c customLogger) Info(msg string) { log.Printf("Pion Info: %s\n", msg) }
+func (c customLogger) Infof(format string, args ...interface{}) {
+	c.Trace(fmt.Sprintf(format, args...))
+}
+func (c customLogger) Warn(msg string) { log.Printf("Pion Warn: %s\n", msg) }
+func (c customLogger) Warnf(format string, args ...interface{}) {
+	c.Warn(fmt.Sprintf(format, args...))
+}
+func (c customLogger) Error(msg string) { log.Printf("Pion Error: %s\n", msg) }
+func (c customLogger) Errorf(format string, args ...interface{}) {
+	c.Error(fmt.Sprintf(format, args...))
+}
+
+// customLoggerFactory satisfies the interface logging.LoggerFactory
+// This allows us to create different loggers per subsystem. So we can
+// add custom behavior
+type customLoggerFactory struct{}
+
+func (c customLoggerFactory) NewLogger(subsystem string) logging.LeveledLogger {
+	fmt.Printf("Creating logger for %s \n", subsystem)
+	return customLogger{}
 }
 
 func NewMuxer(options Options) *Muxer {
@@ -86,7 +125,9 @@ func (element *Muxer) NewPeerConnection(configuration webrtc.Configuration) (*we
 	if err := webrtc.RegisterDefaultInterceptors(m, i); err != nil {
 		return nil, err
 	}
-	s := webrtc.SettingEngine{}
+	s := webrtc.SettingEngine{
+		LoggerFactory: customLoggerFactory{},
+	}
 	s.SetSRTPProtectionProfiles(extension.SRTP_AES128_CM_HMAC_SHA1_80)
 
 	if element.Options.PortMin > 0 && element.Options.PortMax > 0 && element.Options.PortMax > element.Options.PortMin {
@@ -153,6 +194,7 @@ func (element *Muxer) WriteHeader(
 	if err != nil {
 		return "Create pc failed", err
 	}
+
 	element.userId = ID
 
 	audioTrack, err := element.getAudioTrack()
@@ -166,9 +208,11 @@ func (element *Muxer) WriteHeader(
 
 	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
 		element.status = connectionState
+		log.Println("OnICEConnectionStateChange: ", connectionState)
 	})
 	peerConnection.OnConnectionStateChange(func(connectionState webrtc.PeerConnectionState) {
-		log.Println("PeerConnectionState: ", connectionState)
+		element.pcStatus = connectionState
+		log.Println("OnConnectionStateChange: ", connectionState)
 	})
 
 	gatherCompletePromise := webrtc.GatheringCompletePromise(peerConnection)
@@ -292,6 +336,11 @@ func (element *Muxer) connectJanusAndSendMsgs(
 }
 
 func (element *Muxer) Close() {
+	if element.pcStatus == webrtc.PeerConnectionStateNew ||
+		element.pcStatus == webrtc.PeerConnectionStateConnecting {
+		log.Println("PeerConnection pending... ignore close cmd.")
+		return
+	}
 	if element.stop {
 		log.Println("This WebRTC instance is stopping, please wait...")
 		return
@@ -307,7 +356,6 @@ func (element *Muxer) Close() {
 	}
 
 	if element.pc != nil {
-		log.Println("closeAudioDriverIfNecessary")
 		element.CloseAudioDriverIfNecessary()
 
 		log.Println("Closing pc...")
@@ -321,9 +369,10 @@ func (element *Muxer) Close() {
 }
 
 func (element *Muxer) CloseAudioDriverIfNecessary() {
+	log.Println("Close driver starting...")
 	audioDrivers := driver.GetManager().Query(driver.FilterAudioRecorder())
 	for _, d := range audioDrivers {
-		if d.Status() != driver.StateOpened {
+		if d.Status() != driver.StateClosed {
 			err := d.Close()
 			if err != nil {
 				log.Println("Close driver failed:", err)
@@ -332,6 +381,30 @@ func (element *Muxer) CloseAudioDriverIfNecessary() {
 	}
 
 	log.Println("Close driver finished")
+}
+
+func (element *Muxer) Mute() {
+	audioDrivers := driver.GetManager().Query(driver.FilterAudioRecorder())
+	for _, d := range audioDrivers {
+		if d.Status() != driver.StateClosed {
+			success := d.Mute()
+			if !success {
+				log.Println("Mute failed")
+			}
+		}
+	}
+}
+
+func (element *Muxer) Unmute() {
+	audioDrivers := driver.GetManager().Query(driver.FilterAudioRecorder())
+	for _, d := range audioDrivers {
+		if d.Status() != driver.StateClosed {
+			success := d.Unmute()
+			if !success {
+				log.Println("Unmute failed")
+			}
+		}
+	}
 }
 
 func (element *Muxer) janusEventsHandle(handle *janus.Handle) {

@@ -18,6 +18,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+
+	"golang.org/x/sys/windows"
 )
 
 const DEBUG = false
@@ -77,6 +79,8 @@ func makeConfig() {
 //StartPublishing :
 //export StartPublishing
 func StartPublishing(p *C.char) int {
+	threadId := windows.GetCurrentThreadId()
+	log.Printf("============== Calling StartPublishing, current thead: %d", threadId)
 	// Config first
 	makeConfig()
 	var startedSuccess = false
@@ -160,6 +164,9 @@ func StartPublishing(p *C.char) int {
 //StopPublishing :
 //export StopPublishing
 func StopPublishing() int {
+	threadId := windows.GetCurrentThreadId()
+	log.Printf("============== Calling StopPublishing, current thead: %d", threadId)
+
 	if config.Config.Client == nil {
 		log.Println("No sound is publising!")
 		return -10
@@ -174,6 +181,46 @@ func StopPublishing() int {
 		config.Config.Client = nil
 	} else {
 		log.Printf("Destroy (%s) WebRTC resource failed: client does not exist! exec anyway\n", client.ID)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	return 0
+}
+
+//Unmute :
+//export Mute
+func Mute() int {
+	threadId := windows.GetCurrentThreadId()
+	log.Printf("============== Calling Mute, current thead: %d", threadId)
+
+	if config.Config.Client == nil {
+		log.Println("No sound is publising!")
+		return -10
+	}
+
+	client := config.Config.Client
+	if client.WebRTC != nil {
+		client.WebRTC.Mute()
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	return 0
+}
+
+//Unmute :
+//export Unmute
+func Unmute() int {
+	threadId := windows.GetCurrentThreadId()
+	log.Printf("============== Calling Unmute, current thead: %d", threadId)
+
+	if config.Config.Client == nil {
+		log.Println("No sound is publising!")
+		return -10
+	}
+
+	client := config.Config.Client
+	if client.WebRTC != nil {
+		client.WebRTC.Unmute()
 	}
 
 	time.Sleep(100 * time.Millisecond)
@@ -197,7 +244,7 @@ func Stream2WebRTC(client *config.Client) (string, error) {
 		client.Display)
 	if err != nil {
 		// should close audio driver.
-		muxerWebRTC.CloseAudioDriverIfNecessary()
+		//muxerWebRTC.CloseAudioDriverIfNecessary()
 		return msg, err
 	}
 
@@ -253,7 +300,8 @@ func testFromCLI() {
 		if text == "q" {
 			break
 		} else if text == "start" {
-			testStart(publishingUUID)
+			testAsyncFunc()
+			// testStart(publishingUUID)
 		} else if text == "stop" {
 			testStop(publishingUUID)
 		}
@@ -266,6 +314,9 @@ func testFromCLI() {
 }
 
 func testStart(uuid string) {
+	threadId := windows.GetCurrentThreadId()
+	log.Printf("============== Calling StartPublishing, current thead: %d", threadId)
+
 	var startedSuccess = false
 
 	defer func() {
@@ -315,6 +366,9 @@ func testStart(uuid string) {
 }
 
 func testStop(uuid string) {
+	threadId := windows.GetCurrentThreadId()
+	log.Printf("============== Calling StopPublishing, current thead: %d", threadId)
+
 	if config.Config.Client == nil {
 		log.Print("No client started yet, please start a client first!")
 		return
@@ -331,4 +385,13 @@ func testStop(uuid string) {
 	}
 	config.Config.Client = nil
 	time.Sleep(100 * time.Millisecond)
+}
+
+func testAsyncFunc() {
+	time.AfterFunc(2*time.Millisecond, func() {
+		testStart(publishingUUID)
+	})
+	time.AfterFunc(2*time.Second, func() {
+		testStop(publishingUUID)
+	})
 }

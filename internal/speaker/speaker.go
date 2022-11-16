@@ -38,6 +38,8 @@ type speaker struct {
 
 	device    *malgo.Device
 	inputProp prop.Media
+
+	muted bool
 }
 
 func init() {
@@ -110,6 +112,37 @@ func (m *speaker) Close() error {
 	return nil
 }
 
+func (m *speaker) Mute() bool {
+	if m.device == nil {
+		return false
+	}
+
+	m.muted = true
+	err := m.device.Stop()
+	if err != nil {
+		log.Println("Mute device failed:", err)
+		m.muted = false
+		return false
+	}
+
+	return true
+}
+
+func (m *speaker) Unmute() bool {
+	if m.device == nil {
+		return false
+	}
+
+	m.muted = false
+	err := m.device.Start()
+	if err != nil {
+		log.Println("Unmute device failed:", err)
+		return false
+	}
+
+	return true
+}
+
 // restart
 func (m *speaker) Restart() {
 	log.Println("Restarting...")
@@ -158,7 +191,9 @@ func (m *speaker) defaultPlaybackDevice(inputProp prop.Media) (*malgo.Device, er
 	callbacks.Data = onRecvChunk
 	onDeviceStop := func() {
 		go func() {
-			m.Restart()
+			if !m.muted {
+				m.Restart()
+			}
 		}()
 	}
 	callbacks.Stop = onDeviceStop
