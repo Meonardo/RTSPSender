@@ -15,7 +15,7 @@ const RTSPReg = `(rtsp):\/\/((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5
 
 //Configs struct
 type Configs struct {
-	mutex   sync.RWMutex
+	Mutex   sync.RWMutex
 	Client  *Client
 	Clients map[string]Client `json:"clients"`
 
@@ -53,8 +53,8 @@ func (element *Configs) CopyClient() Client {
 }
 
 func (element *Configs) AddClient(id string, client Client) bool {
-	element.mutex.Lock()
-	defer element.mutex.Unlock()
+	element.Mutex.Lock()
+	defer element.Mutex.Unlock()
 
 	if _, ok := element.Clients[id]; !ok {
 		element.Clients[id] = client
@@ -64,8 +64,8 @@ func (element *Configs) AddClient(id string, client Client) bool {
 }
 
 func (element *Configs) DelClient(id string) bool {
-	element.mutex.Lock()
-	defer element.mutex.Unlock()
+	element.Mutex.Lock()
+	defer element.Mutex.Unlock()
 
 	if _, ok := element.Clients[id]; ok {
 		delete(element.Clients, id)
@@ -75,8 +75,8 @@ func (element *Configs) DelClient(id string) bool {
 }
 
 func (element *Configs) AddRTC2Stream(id string, WebRTC *webrtc.Muxer) bool {
-	element.mutex.Lock()
-	defer element.mutex.Unlock()
+	element.Mutex.Lock()
+	defer element.Mutex.Unlock()
 
 	if tmp, ok := element.Clients[id]; ok {
 		tmp.WebRTC = WebRTC
@@ -87,15 +87,15 @@ func (element *Configs) AddRTC2Stream(id string, WebRTC *webrtc.Muxer) bool {
 }
 
 func (element *Configs) Exist(uuid string) bool {
-	element.mutex.Lock()
-	defer element.mutex.Unlock()
+	element.Mutex.Lock()
+	defer element.Mutex.Unlock()
 	_, ok := element.Clients[uuid]
 	return ok
 }
 
 func (element *Configs) List() (string, []string) {
-	element.mutex.Lock()
-	defer element.mutex.Unlock()
+	element.Mutex.Lock()
+	defer element.Mutex.Unlock()
 	var res []string
 	var fist string
 	for k := range element.Clients {

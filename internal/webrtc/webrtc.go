@@ -365,6 +365,8 @@ func (element *Muxer) Close() {
 		}
 		element.pc = nil
 		log.Println("Close pc finished")
+
+		element.stop = false
 	}
 }
 

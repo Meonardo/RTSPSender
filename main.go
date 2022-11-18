@@ -81,6 +81,9 @@ func makeConfig() {
 func StartPublishing(p *C.char) int {
 	threadId := windows.GetCurrentThreadId()
 	log.Printf("============== Calling StartPublishing, current thead: %d", threadId)
+
+	// lock the config resource
+	config.Config.Mutex.Lock()
 	// Config first
 	makeConfig()
 	var startedSuccess = false
@@ -95,6 +98,9 @@ func StartPublishing(p *C.char) int {
 				config.Config.Client = nil
 			}
 		}
+
+		// unlock it
+		config.Config.Mutex.Unlock()
 	}()
 
 	if config.Config.Client != nil {
@@ -167,6 +173,10 @@ func StopPublishing() int {
 	threadId := windows.GetCurrentThreadId()
 	log.Printf("============== Calling StopPublishing, current thead: %d", threadId)
 
+	// lock the config resource
+	config.Config.Mutex.Lock()
+	defer config.Config.Mutex.Unlock()
+
 	if config.Config.Client == nil {
 		log.Println("No sound is publising!")
 		return -10
@@ -193,6 +203,10 @@ func Mute() int {
 	threadId := windows.GetCurrentThreadId()
 	log.Printf("============== Calling Mute, current thead: %d", threadId)
 
+	// lock the config resource
+	config.Config.Mutex.Lock()
+	defer config.Config.Mutex.Lock()
+
 	if config.Config.Client == nil {
 		log.Println("No sound is publising!")
 		return -10
@@ -212,6 +226,10 @@ func Mute() int {
 func Unmute() int {
 	threadId := windows.GetCurrentThreadId()
 	log.Printf("============== Calling Unmute, current thead: %d", threadId)
+
+	// lock the config resource
+	config.Config.Mutex.Lock()
+	defer config.Config.Mutex.Lock()
 
 	if config.Config.Client == nil {
 		log.Println("No sound is publising!")
