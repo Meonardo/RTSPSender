@@ -16,12 +16,18 @@ import (
 import (
 	"bufio"
 	"os/signal"
+	"path/filepath"
 	"regexp"
+	"sync"
 	"syscall"
+
+	"golang.org/x/sys/windows"
 )
 
-const DEBUG = true
+const DEBUG = false
 const UsingCLI = true
+
+var globalMutex = sync.RWMutex{}
 
 func main() {
 	if DEBUG {
@@ -48,6 +54,12 @@ func makeConfig() {
 			home = os.Getenv("USERPROFILE")
 		}
 
+		// check if can detect the executebale file dir
+		ex, err := os.Executable()
+		if err == nil {
+			home = filepath.Dir(ex)
+		}
+
 		logPath := home + "\\RTSPSender"
 		if _, err := os.Stat(logPath); os.IsNotExist(err) {
 			err := os.Mkdir(logPath, 0644)
@@ -71,6 +83,14 @@ func makeConfig() {
 //StartPublishing :
 //export StartPublishing
 func StartPublishing(p *C.char) int {
+	threadId := windows.GetCurrentThreadId()
+	log.Printf("============== Calling StartPublishing, current thead: %d", threadId)
+
+	globalMutex.Lock()
+	defer func() {
+		globalMutex.Unlock()
+	}()
+
 	// Config first
 	makeConfig()
 	var startedSuccess = false
@@ -151,6 +171,14 @@ func StartPublishing(p *C.char) int {
 //StopPublishing :
 //export StopPublishing
 func StopPublishing(ID int64, Room int64) int {
+	threadId := windows.GetCurrentThreadId()
+	log.Printf("============== Calling StopPublishing, current thead: %d", threadId)
+
+	globalMutex.Lock()
+	defer func() {
+		globalMutex.Unlock()
+	}()
+
 	if ID <= 0 || Room <= 0 {
 		log.Print("Please input room number and Camera ID")
 		return -1
@@ -218,7 +246,7 @@ var iceServer = []string{
 	"turn:192.168.99.48:3478",
 }
 var testCameras = map[string]string{
-	// "6": "rtsp://192.168.99.47/1",
+	"1": "rtsp://192.168.99.169/1",
 	"8": "rtsp://192.168.99.23/2",
 	// "3": "rtsp://192.168.99.16/1",
 	// "4": "rtsp://192.168.99.18/1",

@@ -34,7 +34,9 @@ type Muxer struct {
 	audioCodecSelector *mediadevices.CodecSelector
 	stopSendingAudio   bool
 	rtspRetryTimes     int
+	userId             string
 
+	Hangup  bool
 	Options Options
 	Janus   *janus.Gateway
 }
@@ -50,44 +52,6 @@ type Options struct {
 	PortMin uint16
 	// PortMin is an optional maximum (inclusive) ephemeral UDP port range for the ICEServers connections
 	PortMax uint16
-}
-
-func (element *Muxer) janusEventsHandle(handle *janus.Handle) {
-	// wait for event
-	for {
-		msg := <-handle.Events
-		switch msg := msg.(type) {
-		case *janus.SlowLinkMsg:
-			log.Println("SlowLinkMsg type, user:", handle.User)
-		case *janus.MediaMsg:
-			if msg.Type == "audio" {
-				if !msg.Receiving {
-					if !element.stopSendingAudio {
-						element.stopSendingAudio = true
-						time.AfterFunc(3*time.Second, func() {
-							if element.stopSendingAudio {
-								log.Println("No audio in 3s, closing audio driver...")
-								element.closeAudioDriverIfNecessary()
-							}
-						})
-					}
-				} else {
-					element.stopSendingAudio = false
-				}
-			} else if msg.Type == "video" {
-				if msg.Receiving {
-					element.rtspRetryTimes = 3
-				}
-			}
-			log.Println("MediaEvent type", msg.Type, "receiving", msg.Receiving, "user:", handle.User)
-		case *janus.WebRTCUpMsg:
-			log.Println("WebRTCUpMsg type, user:", handle.User)
-		case *janus.HangupMsg:
-			log.Println("HangupEvent type", handle.User)
-		case *janus.EventMsg:
-			// log.Printf("EventMsg %+v", msg.Plugindata.Data)
-		}
-	}
 }
 
 func NewMuxer(options Options) *Muxer {
@@ -113,7 +77,6 @@ func (element *Muxer) NewPeerConnection(configuration webrtc.Configuration) (*we
 	videoRTCPFeedback := []webrtc.RTCPFeedback{
 		{Type: "goog-remb", Parameter: ""},
 		{Type: "ccm", Parameter: "fir"},
-		{Type: "nack", Parameter: ""},
 		{Type: "nack", Parameter: "pli"},
 	}
 	for _, codec := range []webrtc.RTPCodecParameters{
@@ -169,58 +132,23 @@ func (element *Muxer) WriteHeader(
 	if err != nil {
 		return "Create pc failed", err
 	}
+	element.userId = ID
 
-	var hasAudio = len(Mic) > 0 && Mic != "mute"
-	var deviceID = ""
-	if hasAudio {
-		deviceInfo := mediadevices.EnumerateDevices()
-		if len(deviceInfo) > 0 {
-			for _, device := range deviceInfo {
-				deviceName := getMD5Hash(device.Name)
-				if device.Kind == mediadevices.AudioInput && strings.EqualFold(deviceName, Mic) {
-					hasAudio = true
-					deviceID = device.DeviceID
-					log.Printf("Found Audio Device: %s, name: %s", device, device.Name)
-					break
-				} else {
-					hasAudio = false
-				}
-			}
-		} else {
-			hasAudio = false
-		}
-
-		if !hasAudio {
-			log.Println("No microphone device found in this machine, not going to send audio...")
-		}
-	}
-
-	if hasAudio && element.audioCodecSelector != nil {
-		// Filter audio(microphone) device id by name
-		s, err := mediadevices.GetUserMedia(mediadevices.MediaStreamConstraints{
-			Audio: func(c *mediadevices.MediaTrackConstraints) {
-				c.DeviceID = prop.String(deviceID)
-				// c.SampleSize = prop.Int(2)
-				// c.SampleRate = prop.Int(32000)
-			},
-			Codec: element.audioCodecSelector,
-		})
-
+	// Get audio track
+	var hasAudio = false
+	audioTrack, err := element.getAudioTrack(Mic)
+	if err != nil {
+		// if there is not a video device for use, send audio anyway
+		log.Println("Can not find audio track, error:", err)
+		hasAudio = false
+	} else {
+		// Add audio track
+		_, err = peerConnection.AddTransceiverFromTrack(audioTrack,
+			webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
 		if err != nil {
-			log.Println("Audio track create failed", err)
-			hasAudio = false
-		} else {
-			audioTrack := s.GetAudioTracks()[0].(*mediadevices.AudioTrack)
-			_, err = peerConnection.AddTransceiverFromTrack(audioTrack,
-				webrtc.RTPTransceiverInit{
-					Direction: webrtc.RTPTransceiverDirectionSendonly,
-				},
-			)
-
-			if err != nil {
-				return "Add audio track failed", err
-			}
+			return "Add audio track failed", err
 		}
+		hasAudio = true
 	}
 
 	// Get video track info from RTSP URL
@@ -241,10 +169,16 @@ func (element *Muxer) WriteHeader(
 	// Connect to RTSP Camera
 	element.connectRTSPCamera(RTSP, rtspVideoTrack, videoTrack)
 
+	// RTC state callbacks
 	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
 		element.status = connectionState
+		log.Println("ICEConnectionState:", connectionState)
+	})
+	peerConnection.OnConnectionStateChange(func(connectionState webrtc.PeerConnectionState) {
+		log.Println("PeerConnectionState:", connectionState)
 	})
 
+	// Wait offer & answer steps are completed
 	gatherCompletePromise := webrtc.GatheringCompletePromise(peerConnection)
 
 	offer, err := peerConnection.CreateOffer(nil)
@@ -261,9 +195,17 @@ func (element *Muxer) WriteHeader(
 	case <-waitT.C:
 		return "", errors.New("gatherCompletePromise wait")
 	case <-gatherCompletePromise:
-		//Connected
+		// Completed
 	}
 
+	// Connect to janus, set remote sdp.
+	return element.connectJanusAndSendMsgs(ID, Room, Pin, Janus, Display, hasAudio, peerConnection)
+}
+
+// Connect to Janus server & join the video room
+func (element *Muxer) connectJanusAndSendMsgs(
+	ID string, Room string, Pin string, Janus string, Display string,
+	HasAudio bool, pc *webrtc.PeerConnection) (string, error) {
 	// Janus
 	gateway, err := janus.Connect(Janus)
 	if err != nil {
@@ -281,6 +223,7 @@ func (element *Muxer) WriteHeader(
 		return "Attach janus session error", err
 	}
 
+	// Send keep-alive to janus in every 30s
 	go func() {
 		for {
 			if element.stop {
@@ -294,16 +237,17 @@ func (element *Muxer) WriteHeader(
 		}
 	}()
 
+	// Receive janus message
 	go element.janusEventsHandle(handle)
 
-	roomNum, err := strconv.Atoi(Room)
+	roomNum, _ := strconv.Atoi(Room)
 	publisherID, err := strconv.Atoi(ID)
 	if err != nil {
 		roomNum = 1234
 		log.Printf("Room number invalid %s", err)
 	}
 
-	_, err = handle.Message(map[string]interface{}{
+	msg, err := handle.Message(map[string]interface{}{
 		"request": "join",
 		"ptype":   "publisher",
 		"room":    roomNum,
@@ -314,24 +258,31 @@ func (element *Muxer) WriteHeader(
 	if err != nil {
 		return fmt.Sprintf("Join room %s failed", Room), err
 	}
+	if msg != nil && msg.Plugindata.Data != nil {
+		data := msg.Plugindata.Data
+		if data["error"] != nil {
+			return fmt.Sprintf("Join room %s failed", Room), fmt.Errorf("join room %s failed, reason: %s", Room, data["error"])
+		}
+	}
 	handle.User = fmt.Sprint(publisherID)
 
-	msg, err := handle.Message(map[string]interface{}{
+	msg, err = handle.Message(map[string]interface{}{
 		"request": "publish",
-		"audio":   hasAudio,
+		"audio":   HasAudio,
 		"video":   true,
 		"data":    false,
 	}, map[string]interface{}{
 		"type":    "offer",
-		"sdp":     peerConnection.LocalDescription().SDP,
+		"sdp":     pc.LocalDescription().SDP,
 		"trickle": false,
 	})
 	if err != nil {
 		return fmt.Sprintf("Publish to room %s failed", Room), err
 	}
 
+	// set remote sdp
 	if msg.Jsep != nil {
-		err = peerConnection.SetRemoteDescription(webrtc.SessionDescription{
+		err = pc.SetRemoteDescription(webrtc.SessionDescription{
 			Type: webrtc.SDPTypeAnswer,
 			SDP:  msg.Jsep["sdp"].(string),
 		})
@@ -345,6 +296,58 @@ func (element *Muxer) WriteHeader(
 	}
 }
 
+// Get audio id by the filter device name hash
+func (element *Muxer) getAudioTrack(deviceNameHash string) (*mediadevices.AudioTrack, error) {
+	var hasAudio = len(deviceNameHash) > 0 && deviceNameHash != "mute"
+	if !hasAudio {
+		return nil, errors.New("invalid microphone device name")
+	}
+
+	var deviceID = ""
+	deviceInfo := mediadevices.EnumerateDevices()
+	if len(deviceInfo) > 0 {
+		for _, device := range deviceInfo {
+			log.Printf("Enum Audio Device: %s, name: %s", device, device.Name)
+
+			deviceNameHash_ := getMD5Hash(device.Name)
+			if device.Kind == mediadevices.AudioInput && strings.EqualFold(deviceNameHash_, deviceNameHash) {
+				hasAudio = true
+				deviceID = device.DeviceID
+				break
+			} else {
+				hasAudio = false
+			}
+		}
+	} else {
+		hasAudio = false
+	}
+
+	if !hasAudio {
+		return nil, errors.New("can not found the target device")
+	}
+
+	// Filter audio(microphone) device id by name
+	s, err := mediadevices.GetUserMedia(mediadevices.MediaStreamConstraints{
+		Audio: func(c *mediadevices.MediaTrackConstraints) {
+			c.DeviceID = prop.String(deviceID)
+			c.SampleSize = prop.Int(2)
+			c.SampleRate = prop.Int(48000)
+			c.IsFloat = prop.BoolExact(true)
+			c.IsInterleaved = prop.BoolExact(true)
+		},
+		Codec: element.audioCodecSelector,
+	})
+
+	if err != nil {
+		log.Println("Audio track create failed", err)
+		return nil, err
+	} else {
+		audioTrack := s.GetAudioTracks()[0].(*mediadevices.AudioTrack)
+		return audioTrack, err
+	}
+}
+
+// Get RTSP video track id
 func (element *Muxer) videoTrackID(rtsp string) (gortsplib.Track, string, error) {
 	c := gortsplib.Client{
 		UserAgent: "RTSPSender",
@@ -395,6 +398,7 @@ func (element *Muxer) videoTrackID(rtsp string) (gortsplib.Track, string, error)
 	return tracks[trackIndex], videoCodeType, nil
 }
 
+// Connect to RTSP camera & get video pkg data from video stream
 func (element *Muxer) connectRTSPCamera(rtsp string, videoTrack gortsplib.Track, track *webrtc.TrackLocalStaticRTP) {
 	// parse URL
 	baseURL, err := url.Parse(rtsp)
@@ -403,6 +407,7 @@ func (element *Muxer) connectRTSPCamera(rtsp string, videoTrack gortsplib.Track,
 		return
 	}
 
+	// pass the video data to Pion
 	go func() {
 		element.rtspClient.OnPacketRTP = func(p *gortsplib.ClientOnPacketRTPCtx) {
 			err := track.WriteRTP(p.Packet)
@@ -411,7 +416,7 @@ func (element *Muxer) connectRTSPCamera(rtsp string, videoTrack gortsplib.Track,
 			}
 		}
 
-		_, err = element.rtspClient.Setup(true, videoTrack, baseURL, 0, 0)
+		_, err = element.rtspClient.Setup(videoTrack, baseURL, 0, 0)
 		_, err = element.rtspClient.Play(nil)
 		err = element.rtspClient.Wait()
 
@@ -435,15 +440,39 @@ func (element *Muxer) connectRTSPCamera(rtsp string, videoTrack gortsplib.Track,
 }
 
 func (element *Muxer) closeAudioDriverIfNecessary() {
+	log.Println("Closing microphone...")
 	audioDrivers := driver.GetManager().Query(driver.FilterAudioRecorder())
 	for _, d := range audioDrivers {
-		if d.Status() != driver.StateOpened {
-			log.Println("Closing microphone...")
+		if d.Status() != driver.StateClosed {
 			err := d.Close()
 			if err != nil {
 				log.Println("Close driver failed", err)
 			}
-			log.Println("Close microphone finished.")
+		}
+	}
+	log.Println("Close microphone finished.")
+}
+
+func (element *Muxer) Mute() {
+	audioDrivers := driver.GetManager().Query(driver.FilterAudioRecorder())
+	for _, d := range audioDrivers {
+		if d.Status() != driver.StateClosed {
+			success := d.Mute()
+			if !success {
+				log.Println("Mute failed")
+			}
+		}
+	}
+}
+
+func (element *Muxer) Unmute() {
+	audioDrivers := driver.GetManager().Query(driver.FilterAudioRecorder())
+	for _, d := range audioDrivers {
+		if d.Status() != driver.StateClosed {
+			success := d.Unmute()
+			if !success {
+				log.Println("Unmute failed")
+			}
 		}
 	}
 }
@@ -480,6 +509,54 @@ func (element *Muxer) Close() {
 		element.pc = nil
 		log.Println("Close pc finished")
 	}
+
+	element.stop = false
+}
+
+func (element *Muxer) janusEventsHandle(handle *janus.Handle) {
+	for {
+		msg := <-handle.Events
+		switch msg := msg.(type) {
+		case *janus.SlowLinkMsg:
+			log.Println("SlowLinkMsg type, user:", handle.User)
+		case *janus.MediaMsg:
+			if msg.Type == "audio" {
+				if !msg.Receiving {
+					if !element.stopSendingAudio {
+						element.stopSendingAudio = true
+						time.AfterFunc(3*time.Second, func() {
+							if element.stopSendingAudio {
+								log.Println("No audio in 3s, closing audio driver...")
+								element.closeAudioDriverIfNecessary()
+							}
+						})
+					}
+				} else {
+					element.stopSendingAudio = false
+				}
+			} else if msg.Type == "video" {
+				if msg.Receiving {
+					element.rtspRetryTimes = 3
+				}
+			}
+			log.Println("MediaEvent type", msg.Type, "receiving", msg.Receiving, "user:", handle.User)
+		case *janus.WebRTCUpMsg:
+			log.Println("WebRTCUpMsg type, user:", handle.User)
+		case *janus.HangupMsg:
+			log.Println("HangupEvent type", handle.User)
+			if handle.User == element.userId {
+				element.handleUserHangup()
+				return
+			}
+		case *janus.EventMsg:
+			// log.Printf("EventMsg %+v", msg.Plugindata.Data)
+		}
+	}
+}
+
+func (element *Muxer) handleUserHangup() {
+	element.Close()
+	element.Hangup = true
 }
 
 func getMD5Hash(text string) string {
