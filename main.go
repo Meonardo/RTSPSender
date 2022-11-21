@@ -205,7 +205,7 @@ func Mute() int {
 
 	// lock the config resource
 	config.Config.Mutex.Lock()
-	defer config.Config.Mutex.Lock()
+	defer config.Config.Mutex.Unlock()
 
 	if config.Config.Client == nil {
 		log.Println("No sound is publising!")
@@ -229,7 +229,7 @@ func Unmute() int {
 
 	// lock the config resource
 	config.Config.Mutex.Lock()
-	defer config.Config.Mutex.Lock()
+	defer config.Config.Mutex.Unlock()
 
 	if config.Config.Client == nil {
 		log.Println("No sound is publising!")
@@ -318,10 +318,13 @@ func testFromCLI() {
 		if text == "q" {
 			break
 		} else if text == "start" {
-			testAsyncFunc()
-			// testStart(publishingUUID)
+			testStart(publishingUUID)
 		} else if text == "stop" {
 			testStop(publishingUUID)
+		} else if text == "mute" {
+			testMute()
+		} else if text == "unmute" {
+			testUnmute()
 		}
 	}
 
@@ -384,25 +387,15 @@ func testStart(uuid string) {
 }
 
 func testStop(uuid string) {
-	threadId := windows.GetCurrentThreadId()
-	log.Printf("============== Calling StopPublishing, current thead: %d", threadId)
+	StopPublishing()
+}
 
-	if config.Config.Client == nil {
-		log.Print("No client started yet, please start a client first!")
-		return
-	}
+func testMute() {
+	Mute()
+}
 
-	client := config.Config.Client
-	// destroy webrtc client
-	if client.WebRTC != nil {
-		log.Printf("Destroying (%s) WebRTC resource\n", client.ID)
-		client.WebRTC.Close()
-		client.WebRTC = nil
-	} else {
-		log.Printf("Destroy (%s) WebRTC resource failed: client does not exist! exec anyway\n", client.ID)
-	}
-	config.Config.Client = nil
-	time.Sleep(100 * time.Millisecond)
+func testUnmute() {
+	Unmute()
 }
 
 func testAsyncFunc() {
